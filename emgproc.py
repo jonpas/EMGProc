@@ -2,26 +2,51 @@
 
 import sys
 import itertools
+import enum
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5 import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5 import QtWidgets
+from myo_raw import MyoRaw, DataCategory, EMGMode
+
+
+class MyoStatus(enum.Enum):
+    DISCONNECTED = 0
+    CONNECTED = 1
 
 
 class MainWindow(QtWidgets.QWidget):
-    sig_record_stop = pyqtSignal()
+    sig_myo_stop = pyqtSignal()
 
     def __init__(self):
         super().__init__()
 
         self.signal = None
         self.plotbackground = None
+        self.plottime = 5  # Seconds
         self.recording = False
+
+        # Myo data
+        self.channels = 8
+        self.rate = 200
+
+        self.plotsamples = self.plottime * self.rate
 
         self.initUI()
 
+    # Overriden close event
+    def closeEvent(self, event):
+        self.sig_myo_stop.emit()
+
+    # Overriden resize event
+    def resizeEvent(self, resizeEvent):
+        if self.is_signal_loaded():
+            self.on_plot_change(None)
+        self.plotnav.move(self.width() - 55, 0)
+
+    # UI
     def initUI(self):
         # File selector
         lbl_file = QtWidgets.QLabel("File:")
@@ -35,12 +60,10 @@ class MainWindow(QtWidgets.QWidget):
         self.btn_save.setDisabled(True)
         self.btn_save.clicked.connect(self.show_save_dialog)
 
+        # Myo status
+        self.lbl_status = QtWidgets.QLabel("Myo disconnected")
+
         # Recording
-        self.cb_sample_rate = QtWidgets.QComboBox()
-        self.cb_sample_rate.setToolTip("Sampling rate")
-        self.cb_sample_rate.addItems(["50 Hz", "200 Hz"])
-        self.cb_sample_rate.setCurrentIndex(1)
-        self.sampling_rates = [50, 200]  # Same indexes as text above
         self.btn_record = QtWidgets.QPushButton("Record")
         self.btn_record.setMinimumWidth(100)
         self.btn_record.clicked.connect(self.record)
@@ -48,7 +71,7 @@ class MainWindow(QtWidgets.QWidget):
         # Graph space
         self.figure = Figure()
         FigureCanvas(self.figure)
-        self.figure.canvas.setMinimumHeight(400)
+        self.figure.canvas.setMinimumHeight(750)
         self.figure.canvas.mpl_connect("motion_notify_event", self.on_plot_over)
 
         # Graph toolbar
@@ -63,11 +86,12 @@ class MainWindow(QtWidgets.QWidget):
         hbox_top.addWidget(btn_file)
         hbox_top.addWidget(self.btn_save)
         hbox_top.addStretch()
+        hbox_top.addWidget(self.btn_record)
 
         hbox_bot = QtWidgets.QHBoxLayout()
         hbox_bot.addStretch()
-        hbox_bot.addWidget(self.cb_sample_rate)
-        hbox_bot.addWidget(self.btn_record)
+        hbox_bot.addWidget(self.lbl_status)
+        hbox_bot.addStretch()
 
         vbox = QtWidgets.QVBoxLayout()
         vbox.addLayout(hbox_top)
@@ -76,20 +100,26 @@ class MainWindow(QtWidgets.QWidget):
 
         # Window
         self.setLayout(vbox)
-        self.setGeometry(300, 300, 1000, 500)
+        self.setGeometry(300, 300, 1000, 800)
         self.setWindowTitle("Electromyography Processor")
         self.show()
 
-    # Overriden resize event
-    def resizeEvent(self, resizeEvent):
-        if self.is_signal_loaded():
-            self.on_plot_change(None)
-        self.plotnav.move(self.width() - 55, 0)
+        # Run Myo thread
+        self.myo_thread = MyoThread(self.rate, self.channels)
+        self.sig_myo_stop.connect(self.myo_thread.stop)
+        self.myo_thread.sig_status.connect(self.on_myo_status)
+        self.myo_thread.sig_data.connect(self.on_myo_data)
+        self.myo_thread.start()
+
+        #self.plot([5, 2, -6, 1, -3, 1, 6 ,6])
+        #for i in range(100):
+        #    self.plot([])
 
     def update_ui(self):
         self.btn_save.setDisabled(not self.is_signal_loaded())
         self.btn_record.setText("Stop Recording" if self.recording else "Record")
 
+    # Save / Load
     def show_open_dialog(self):
         fname = QtWidgets.QFileDialog.getOpenFileName(self, "Open file", filter="CSV (*.csv)")
         if fname[0] and self.load_signal(fname[0]):
@@ -127,6 +157,7 @@ class MainWindow(QtWidgets.QWidget):
     def is_signal_loaded(self):
         return self.signal is not None
 
+    # Plotting
     def plot(self, sig):
         # TODO Graph
         self.figure.clear()
@@ -139,18 +170,25 @@ class MainWindow(QtWidgets.QWidget):
         self.lframe_pos = 0
 
         # X axis as time in seconds
-        time = np.linspace(0, len(sig) / 200, num=len(sig))
+        time = np.linspace(0, 5, num=len(sig))
 
-        ax = self.figure.add_subplot(self.subplots, 1, 1)
+        for i in range(0, self.channels):
+            ax = self.figure.add_subplot(self.channels, 1, i + 1)
 
-        # Plot signal
-        ax.plot(time, sig)
-        ax.margins(0)
+            # Plot signal
+            ax.plot(time, sig)
+            ax.margins(0)
+            ax.set_ylim(-128, 128)
 
-        ax.set_ylabel("Amplitude")
-        self.subplots.append(ax)
+            # Hide X axis on all but last channel
+            if i + 1 < self.channels:
+                ax.get_xaxis().set_visible(False)
+            # Display Y label somewhere in the middle
+            if i == max(int(self.channels / 2) - 1, 0):
+                ax.set_ylabel("Amplitude")
 
-        self.figure.subplots_adjust(hspace=0.0)
+            self.subplots.append(ax)
+
         ax.set_xlabel("Time (s)")
 
         # Handle zoom/pan events
@@ -198,13 +236,8 @@ class MainWindow(QtWidgets.QWidget):
         else:
             self.lover_pos = 0
 
-        if self.plotbackground is not None:
-            self.plot_update()
-
-    def plot_frame(self, x):
-        # Update lines
-        self.lframe_pos = x
-        self.plot_update()
+        #if self.plotbackground is not None:
+            #self.plot_update()
 
     def plot_update(self):
         self.figure.canvas.restore_region(self.plotbackground)
@@ -217,26 +250,36 @@ class MainWindow(QtWidgets.QWidget):
             self.subplots[i].draw_artist(lframe)
         self.figure.canvas.blit(self.figure.bbox)
 
+    # Myo interface
+    def on_myo_status(self, status):
+        if status == MyoStatus.CONNECTED:
+            self.lbl_status.setText(f"Myo connected")
+            self.signal = [0]
+        elif status == MyoStatus.DISCONNECTED:
+            self.lbl_status.setText(f"Myo disconnected")
+            self.signal = None
+
+    def on_myo_data(self, timestamp, emg):
+        print('emg:', timestamp, emg)
+        if self.is_signal_loaded():
+            if len(self.signal) > 5:  #self.plotsamples:
+                self.signal.pop(0)
+            self.signal.append(emg[0])
+            # TODO Change to matplotlib FuncAnimation
+            #self.plot(self.signal)
+
     def record(self):  # Toggle
         if self.recording:
-            self.sig_record_stop.emit()
+            pass
+            #self.sig_myo_stop.emit()
         else:
             self.recording = True
-            rate = self.sampling_rates[self.cb_sample_rate.currentIndex()]
-            self.record_thread = RecordThread(rate, 8)  # Always record all 8 EMG channels
-            self.sig_record_stop.connect(self.record_thread.stop)
-            self.record_thread.sig_return.connect(self.on_record_return)
-            self.record_thread.start()
             self.update_ui()
 
-    def on_record_return(self, data, rate, channels):
-        self.load_emg(data, rate, channels)
-        self.recording = False
-        self.update_ui()
 
-
-class RecordThread(QThread):
-    sig_return = pyqtSignal(bytes, int, int)
+class MyoThread(QThread):
+    sig_data = pyqtSignal(float, tuple, object, int)
+    sig_status = pyqtSignal(MyoStatus)
 
     def __init__(self, rate, channels):
         QThread.__init__(self)
@@ -244,23 +287,42 @@ class RecordThread(QThread):
         self.rate = rate
         self.channels = channels
 
+        self.myo = None
+
         self.running = True
 
-    def __del__(self):
-        self.wait()
-
     def run(self):
-        # TODO EmgData
+        # DEBUG
+        self.sig_data.emit(0.0, (-4, -5, 2, -128, -4, 1, 0, -7))
+        pass
 
-        data = []
+        # Setup the BLED112 dongle or a native Bluetooth stack with bluepy and connect to a Myo armband
+        self.myo = MyoRaw()
+        # Add handler to process EMG
+        self.myo.add_handler(DataCategory.EMG, self.emg_handler)
+        # Subscribe to all data services
+        self.myo.subscribe(EMGMode.RAW)
+        # Disable sleep to avoid disconnects while retrieving data
+        self.myo.set_sleep_mode(1)
+        # Vibrate and change colors (green logo, blue bar) to signalise a successfull setup
+        #self.myo.vibrate(1)  # Temporarily disabled during development
+        self.myo.set_leds([0, 255, 0], [0, 0, 255])
+
+        self.sig_status.emit(MyoStatus.CONNECTED)
+
         while self.running:
-            pass
+            self.myo.run(1)
 
-        # Return recording data
-        self.sig_return.emit(b''.join(data), self.rate, self.channels)
+        self.myo.disconnect()
+        self.sig_status.emit(MyoStatus.DISCONNECTED)
 
     def stop(self):
         self.running = False
+
+    def emg_handler(self, timestamp, emg, moving, characteristic_num):
+        #print('emg:', timestamp, emg, moving, characteristic_num)
+        # Send data to main thread for processing
+        self.sig_data.emit(timestamp, emg)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,5 @@ Electromyography Processing application at Neuro, Nano and Quantum Computing (sl
 ### Setup
 
 **Dependencies:**
-- [PyQt5](https://riverbankcomputing.com/software/pyqt/download5)
-- [NumPy](https://github.com/numpy/numpy)
-- [matplotlib](https://github.com/matplotlib/matplotlib)
+- [myo-raw](https://github.com/jonpas/myo-raw)
+- [Pygame](https://www.pygame.org/)

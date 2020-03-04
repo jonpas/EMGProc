@@ -3,6 +3,7 @@
 import sys
 import argparse
 import time
+import serial
 
 import pygame
 from myo_raw import MyoRaw, DataCategory, EMGMode
@@ -10,16 +11,18 @@ from myo_raw import MyoRaw, DataCategory, EMGMode
 
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 600
+PLOT_SCROLL = 5  # higher is faster
+SUBPLOTS = 8
+FONT_SIZE = 25
+
 VERBOSE = False
-
-
 pygame.init()
 
 
 class Plot():
     def __init__(self):
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        self.font = pygame.font.Font(None, 30)
+        self.font = pygame.font.Font(None, FONT_SIZE)
 
         self.last_vals = None
 
@@ -28,25 +31,37 @@ class Plot():
             self.last_vals = vals
             return
 
-        D = 5
-        self.screen.scroll(-D)
-        self.screen.fill((0, 0, 0), (WINDOW_WIDTH - D, 0, WINDOW_WIDTH, WINDOW_HEIGHT))
+        self.screen.scroll(-PLOT_SCROLL)
+        self.screen.fill(pygame.Color("black"), (WINDOW_WIDTH - PLOT_SCROLL, 0, WINDOW_WIDTH, WINDOW_HEIGHT))
 
         for i, (u, v) in enumerate(zip(self.last_vals, vals)):
-            pygame.draw.line(self.screen, (0, 255, 0),
-                             (WINDOW_WIDTH - D, int(WINDOW_HEIGHT / 9 * (i + 1 - u))),
-                             (WINDOW_WIDTH, int(WINDOW_HEIGHT / 9 * (i + 1 - v))))
-            pygame.draw.line(self.screen, (255, 255, 255),
-                             (WINDOW_WIDTH - D, int(WINDOW_HEIGHT / 9 * (i+1))),
-                             (WINDOW_WIDTH, int(WINDOW_HEIGHT / 9 * (i+1))))
+            # Signal
+            pygame.draw.line(self.screen, pygame.Color("green"),
+                             (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
+                             (WINDOW_WIDTH, self.subplot_height(i, v)))
+
+            base_height = self.subplot_height(i)
+            # Subplot base
+            pygame.draw.line(self.screen, pygame.Color("white"),
+                             (WINDOW_WIDTH - PLOT_SCROLL, base_height),
+                             (WINDOW_WIDTH, base_height))
+
+            emg = self.font.render(f"EMG {i}", True, pygame.Color("blue"))
+            self.screen.fill(pygame.Color("black"),  # Clear old subplot name
+                             (0, base_height - FONT_SIZE // 2, 75, FONT_SIZE))
+            self.screen.blit(emg, (0, base_height - FONT_SIZE // 2))
 
         if frequency:
-            framerate = self.font.render(f"{frequency} Hz", True, pygame.Color("red"))
-            self.screen.fill((0, 0, 0), (0, 0, 100, 30))  # Clear old framerate
+            framerate = self.font.render(f"{frequency} Hz", True,
+                                         pygame.Color("white") if frequency > 180 else pygame.Color("red"))
+            self.screen.fill(pygame.Color("black"), (0, 0, 75, FONT_SIZE))  # Clear old framerate
             self.screen.blit(framerate, (0, 0))
 
         pygame.display.flip()
         self.last_vals = vals
+
+    def subplot_height(self, i, value=0):
+        return int(WINDOW_HEIGHT / (SUBPLOTS + 1) * (i + 1 - value))
 
 
 class Myo():
@@ -131,7 +146,11 @@ def main():
         # Run until terminated by user
         try:
             while True:
-                myo.myo.run(1)
+                try:
+                    myo.myo.run(1)
+                except serial.serialutil.SerialException:
+                    print("Error! Myo exception! Rebooting ...")
+                    myo = Myo(args.tty, args.native, args.mac)
 
                 for ev in pygame.event.get():
                     if ev.type == pygame.QUIT:

@@ -16,16 +16,19 @@ WINDOW_HEIGHT = 600
 PLOT_SCROLL = 5  # higher is faster
 SUBPLOTS = 8
 FONT_SIZE = 25
+CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
 
 VERBOSE = False
 
 
-class Plot():
-    def __init__(self):
+# Plotting (Pygame) window interface
+class Plotter():
+    def __init__(self, live=False):
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         pygame.display.set_caption("Electromyography Processor")
         self.font = pygame.font.Font(None, FONT_SIZE)
 
+        self.live = live
         self.last_vals = None
 
     def plot(self, vals, frequency=None, recording=False):
@@ -42,8 +45,8 @@ class Plot():
                              (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
                              (WINDOW_WIDTH, self.subplot_height(i, v)))
 
-            base_height = self.subplot_height(i)
             # Subplot base
+            base_height = self.subplot_height(i)
             pygame.draw.line(self.screen, pygame.Color("white"),
                              (WINDOW_WIDTH - PLOT_SCROLL, base_height),
                              (WINDOW_WIDTH, base_height))
@@ -53,22 +56,11 @@ class Plot():
                              (0, base_height - FONT_SIZE // 2, 75, FONT_SIZE))
             self.screen.blit(emg, (0, base_height - FONT_SIZE // 2))
 
-        # Clear old top row
-        self.screen.fill(pygame.Color("black"), (0, 0, WINDOW_WIDTH, FONT_SIZE))
-
-        # Control keybinds
-        pause = self.font.render("P (pause)", True, pygame.Color("white"))
-        self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
-        record = self.font.render("R (stop rec)" if recording else "R (record)",
-                                  True,
-                                  pygame.Color("red") if recording else pygame.Color("white"))
-        self.screen.blit(record, (WINDOW_WIDTH - 150, 0))
-
+        self.clear_top()
         if frequency:
-            framerate = self.font.render(f"{frequency} Hz", True,
-                                         pygame.Color("green") if frequency > 180 else pygame.Color("red"))
-            self.screen.fill(pygame.Color("black"), (0, 0, 75, FONT_SIZE))  # Clear old framerate
-            self.screen.blit(framerate, (0, 0))
+            self.render_frequency(frequency)
+        self.render_mode()
+        self.render_controls(recording)
 
         pygame.display.flip()
         self.last_vals = vals
@@ -76,25 +68,104 @@ class Plot():
     def subplot_height(self, i, value=0):
         return int(WINDOW_HEIGHT / (SUBPLOTS + 1) * (i + 1 - value))
 
+    def clear_top(self):
+        self.screen.fill(pygame.Color("black"), (0, 0, WINDOW_WIDTH, FONT_SIZE))
 
-class Myo():
-    def __init__(self, tty, native, mac):
-        # Instantiate
-        self.myo = MyoRaw(tty, native, mac)
-        self.plot = None  # Late setup (display modes)
+    def render_mode(self):
+        mode_text = "LIVE" if self.live else "PLAYBACK"
+        mode = self.font.render("LIVE" if self.live else "PLAYBACK",
+                                True, pygame.Color("green"))
+        self.screen.blit(mode, (WINDOW_WIDTH - WINDOW_WIDTH // 2 - len(mode_text) * FONT_SIZE // 2, 0))
 
-        # Variables
+    def render_frequency(self, frequency):
+        framerate = self.font.render(f"{frequency} Hz", True,
+                                     pygame.Color("green") if frequency > 180 else pygame.Color("red"))
+        self.screen.fill(pygame.Color("black"), (0, 0, 75, FONT_SIZE))  # Clear old framerate
+        self.screen.blit(framerate, (0, 0))
+
+    def render_controls(self, recording):
+        pause = self.font.render("P (pause)", True, pygame.Color("white"))
+        self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
+
+        if self.live:  # Can only record live
+            record = self.font.render("R (stop rec)" if recording else "R (record)", True,
+                                      pygame.Color("red") if recording else pygame.Color("white"))
+            self.screen.blit(record, (WINDOW_WIDTH - 150, 0))
+
+    def pause(self):
+        self.clear_top()
+        pause = self.font.render("P (resume)", True, pygame.Color("red"))
+        self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
+
+        self.render_mode()
+        pygame.display.flip()
+
+    def end(self):
+        self.clear_top()
+        pause = self.font.render("END", True, pygame.Color("red"))
+        self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
+
+        self.render_mode()
+        pygame.display.flip()
+
+
+# Interface for data streaming from either live Myo device or recorded playback
+class Stream():
+    def __init__(self):
+        self.plotter = None  # Late setup (display modes)
         self.paused = False
-        self.recording = False
+        self.ended = False
+
         # Frequency measuring
         self.times = []
         self.frequency = 0
+
+    def create_plot(self, live=False):
+        self.plotter = Plotter(live=live)
+
+    def plot(self, data, recording=False):
+        # Track effective frequency (framerate)
+        self.times.append(time.time())
+        if len(self.times) >= 100:
+            self.frequency = int((len(self.times) - 1) / (self.times[-1] - self.times[0]))
+            self.times.clear()
+
+        if not self.paused:
+            self.plotter.plot(data, frequency=self.frequency, recording=recording)
+
+    def pause(self, state=False, toggle=False):
+        if toggle:
+            self.paused = not self.paused
+        else:
+            self.paused = state
+
+        if self.paused and not self.ended:
+            self.plotter.pause()
+
+    def end(self):
+        self.ended = True
+        self.plotter.end()
+
+
+# Live Myo device interface
+class Myo():
+    def __init__(self, stream, tty, native, mac):
+        # Instantiate
+        self.myo = MyoRaw(tty, native, mac)
+        self.stream = stream
+
+        self.recording = False
+
         # Recording
         self.emg_file = None
         self.emg_writer = None
 
         # Setup
         self.setup_myo()
+
+    def close(self):
+        self.myo.disconnect()
+        self.record(False)
 
     def setup_myo(self):
         # Add handles to process EMG and battery level data
@@ -110,27 +181,15 @@ class Myo():
         # Vibrate to signalise a successful setup
         # myo.vibrate(1)
 
-    def create_plot(self):
-        self.plot = Plot()
-
     def handle_emg(self, timestamp, emg, moving, characteristic_num):
-        # Track effective frequency (framerate)
-        self.times.append(time.time())
-        if len(self.times) >= 100:
-            self.frequency = int((len(self.times) - 1) / (self.times[-1] - self.times[0]))
-            self.times.clear()
-
-        if not self.paused:
-            self.plot.plot([e / 500. for e in emg],
-                           frequency=self.frequency,
-                           recording=self.recording)
+        self.stream.plot([e / 500. for e in emg], recording=self.recording)
 
         if self.recording:
             data = [timestamp] + list(emg)
             self.emg_writer.writerow(data)
 
         if VERBOSE:
-            print("emg:", timestamp, emg, moving, characteristic_num)
+            print("[myo] emg:", timestamp, emg)
 
     def handle_battery(self, timestamp, battery_level):
         if battery_level < 5:
@@ -139,13 +198,7 @@ class Myo():
             self.myo.set_leds([128, 128, 255], [128, 128, 255])  # purple logo, purple bar
 
         if VERBOSE:
-            print("battery level:", timestamp, battery_level)
-
-    def pause(self, state=False, toggle=False):
-        if toggle:
-            self.paused = not self.paused
-        else:
-            self.paused = state
+            print("[myo] battery level:", timestamp, battery_level)
 
     def record(self, state=False, toggle=False):
         if toggle:
@@ -158,20 +211,64 @@ class Myo():
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.emg_file = open(filename, "w", newline="")
             self.emg_writer = csv.writer(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
-            self.emg_writer.writerow(["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"])
+            self.emg_writer.writerow(CSV_HEADER_EMG)
         elif self.emg_file is not None:
             self.emg_file.close()
             self.emg_file = None
             self.emg_writer = None
 
 
+# Recorded Myo data playback interface
+class Playback():
+    def __init__(self, stream, filename):
+        self.stream = stream
+
+        self.valid = False
+        try:
+            self.emg_file = open(filename, "r", newline="")
+            self.emg_reader = csv.reader(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
+            self.read_header()
+        except FileNotFoundError:
+            self.emg_file = None
+
+    def close(self):
+        if self.emg_file:
+            self.emg_file.close()
+
+    def read_header(self):
+        try:
+            header = next(self.emg_reader)
+            if header == CSV_HEADER_EMG:
+                self.valid = True
+        except StopIteration:
+            pass
+
+    def is_valid(self):
+        return self.valid
+
+    # Plays a frame from the recording and indicating end of recording on subsequent calls
+    def play_frame(self):
+        if not self.stream.paused:
+            try:
+                data = next(self.emg_reader)
+                timestamp, emg = data[0], tuple(map(int, data[1:]))
+                self.stream.plot([e / 500. for e in emg])
+
+                if VERBOSE:
+                    print("[playback] emg:", timestamp, emg)
+            except StopIteration:
+                self.stream.end()
+
+
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description="Electromyography Processor")
-    parser.add_argument("--sleep", default=False, action="store_true", help="Put Myo into deep sleep (turn off)")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
-    group.add_argument("--native", default=False, action="store_true", help="Use a native Bluetooth stack")
+    group1 = parser.add_mutually_exclusive_group()
+    group1.add_argument("-r", "--recording", default=None, help="Playback recorded Myo data stream")
+    group1.add_argument("-s", "--sleep", default=False, action="store_true", help="Put Myo into deep sleep (turn off)")
+    group2 = parser.add_mutually_exclusive_group()
+    group2.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
+    group2.add_argument("--native", default=False, action="store_true", help="Use a native Bluetooth stack")
     parser.add_argument("--mac", default=None, help="Myo MAC address (arbitrarily detected if omitted)")
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="Verbose output")
     args = parser.parse_args()
@@ -180,24 +277,40 @@ def main():
         global VERBOSE
         VERBOSE = args.verbose
 
-    # Myo setup
-    myo = Myo(args.tty, args.native, args.mac)
+    live_myo = args.recording is None
 
+    # Setup common stream interface for Myo or Playback
+    stream = Stream()
+
+    # Setup Myo or Playback
+    if live_myo:
+        myo = Myo(stream, args.tty, args.native, args.mac)
+    else:
+        playback = Playback(stream, args.recording)
+        if not playback.is_valid():
+            print("Error! Invalid CSV file!")
+            return 1
+
+    # Run main logic
     if args.sleep:
         myo.myo.deep_sleep()
     else:
         pygame.init()
-        myo.create_plot()
+        stream.create_plot(live=live_myo)
 
-        # Run until terminated by user
+        # Run until terminated by user or recording ended
         try:
             while True:
-                try:
-                    myo.myo.run(1)
-                except serial.serialutil.SerialException:
-                    print("Error! Myo exception! Rebooting ...")
-                    myo.myo.disconnect()
-                    myo = Myo(args.tty, args.native, args.mac)
+                if live_myo:
+                    try:
+                        myo.myo.run(1)
+                    except serial.serialutil.SerialException:
+                        print("Error! Myo exception! Attempting reboot...")
+                        myo.myo.disconnect()
+                        myo = Myo(stream, args.tty, args.native, args.mac)
+                else:
+                    playback.play_frame()
+                    time.sleep(0.0038)  # 1 second / 200 = 200 Hz + orchestration
 
                 # Handle Pygame events
                 for ev in pygame.event.get():
@@ -207,15 +320,19 @@ def main():
                         if ev.unicode == 'q':
                             raise KeyboardInterrupt()
                         elif ev.unicode == 'p':
-                            myo.pause(toggle=True)
+                            stream.pause(toggle=True)
                         elif ev.unicode == 'r':
-                            myo.record(toggle=True)
+                            if live_myo:
+                                myo.record(toggle=True)
         except KeyboardInterrupt:
             pass
-        finally:
-            # Cleanup
-            myo.myo.disconnect()
-            myo.record(False)
+
+    if live_myo:
+        myo.close()
+    else:
+        playback.close()
+
+    return 0
 
 
 if __name__ == "__main__":

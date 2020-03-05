@@ -18,7 +18,6 @@ SUBPLOTS = 8
 FONT_SIZE = 25
 
 VERBOSE = False
-pygame.init()
 
 
 class Plot():
@@ -80,7 +79,7 @@ class Myo():
     def __init__(self, tty, native, mac):
         # Instantiate
         self.myo = MyoRaw(tty, native, mac)
-        self.plot = Plot()
+        self.plot = None  # Late setup (display modes)
 
         # Variables
         self.paused = False
@@ -108,6 +107,9 @@ class Myo():
 
         # Vibrate to signalise a successful setup
         # myo.vibrate(1)
+
+    def create_plot(self):
+        self.plot = Plot()
 
     def handle_emg(self, timestamp, emg, moving, characteristic_num):
         # Track effective frequency (framerate)
@@ -188,6 +190,9 @@ def main():
     if args.sleep:
         myo.myo.deep_sleep()
     else:
+        pygame.init()
+        myo.create_plot()
+
         # Run until terminated by user
         try:
             while True:
@@ -212,6 +217,7 @@ def main():
         except KeyboardInterrupt:
             pass
         finally:
+            # Cleanup
             myo.myo.disconnect()
 
             if myo.emg_file is not None:

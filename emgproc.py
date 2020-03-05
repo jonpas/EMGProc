@@ -351,12 +351,16 @@ def main():
 
     # Setup Myo or Playback
     if live_myo:
-        myo = Myo(stream, args.tty, args.native, args.mac)
+        try:
+            myo = Myo(stream, args.tty, args.native, args.mac)
+        except ValueError as e:
+            print("Error!", e)
+            return 1
     else:
         playback = Playback(stream, args.recording)
         if not playback.is_valid():
             print("Error! Invalid CSV file!")
-            return 1
+            return 2
 
     # Run main logic
     if args.sleep:

@@ -371,6 +371,7 @@ def main():
 
         # Run until terminated by user or recording ended
         try:
+            starttime = time.time()
             while True:
                 if live_myo:
                     try:
@@ -381,7 +382,11 @@ def main():
                         myo = Myo(stream, args.tty, args.native, args.mac)
                 else:
                     playback.play_frame()
-                    time.sleep(0.0038)  # 1 second / 200 = 200 Hz + orchestration
+
+                    # Delay by 0.005 seconds (1 second / 200 Hz) including execution time
+                    diff = min(time.time() - starttime, 0.005)
+                    time.sleep(0.005 - diff)
+                    starttime = time.time()
 
                 # Handle Pygame events
                 for ev in pygame.event.get():

@@ -4,6 +4,8 @@ import sys
 import argparse
 import time
 import serial
+import csv
+import collections
 
 import pygame
 from myo_raw import MyoRaw, DataCategory, EMGMode
@@ -26,7 +28,7 @@ class Plot():
 
         self.last_vals = None
 
-    def plot(self, vals, frequency=None):
+    def plot(self, vals, frequency=None, recording=False):
         if self.last_vals is None:
             self.last_vals = vals
             return
@@ -51,9 +53,19 @@ class Plot():
                              (0, base_height - FONT_SIZE // 2, 75, FONT_SIZE))
             self.screen.blit(emg, (0, base_height - FONT_SIZE // 2))
 
+        # Clear old top row
+        self.screen.fill(pygame.Color("black"), (0, 0, WINDOW_WIDTH, FONT_SIZE))
+
+        # Control keybinds
+        pause = self.font.render("P (pause)", True, pygame.Color("white"))
+        self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
+        record = self.font.render("R (stop recording)" if recording else "R (record)",
+                                  True, pygame.Color("white"))
+        self.screen.blit(record, (WINDOW_WIDTH - 150, 0))
+
         if frequency:
             framerate = self.font.render(f"{frequency} Hz", True,
-                                         pygame.Color("white") if frequency > 180 else pygame.Color("red"))
+                                         pygame.Color("green") if frequency > 180 else pygame.Color("red"))
             self.screen.fill(pygame.Color("black"), (0, 0, 75, FONT_SIZE))  # Clear old framerate
             self.screen.blit(framerate, (0, 0))
 
@@ -72,9 +84,13 @@ class Myo():
 
         # Variables
         self.paused = False
+        self.recording = False
         # Frequency measuring
         self.times = []
         self.frequency = 0
+        # Recording
+        self.emg_file = None
+        self.emg_writer = None
 
         # Setup
         self.setup_myo()
@@ -101,7 +117,12 @@ class Myo():
             self.times.clear()
 
         if not self.paused:
-            self.plot.plot([e / 500. for e in emg], frequency=self.frequency)
+            self.plot.plot([e / 500. for e in emg],
+                           frequency=self.frequency,
+                           recording=self.recording)
+
+        if self.recording:
+            self.emg_writer.writerow(self.flatten([timestamp, emg]))
 
         if VERBOSE:
             print("emg:", timestamp, emg, moving, characteristic_num)
@@ -120,6 +141,30 @@ class Myo():
             self.paused = not self.paused
         else:
             self.paused = state
+
+    def record(self, state=False, toggle=False):
+        if toggle:
+            self.recording = not self.recording
+        else:
+            self.recording = state
+
+        if self.recording:
+            self.emg_file = open(f"recordings/{time.strftime('%Y%m%d-%H%M%S')}_emg.csv", "w", newline="")
+            self.emg_writer = csv.writer(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
+            self.emg_writer.writerow(["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6",
+                                      "emg7", "emg8", "moving", "characteristic_num"])
+        else:
+            self.emg_file.close()
+            self.emg_file = None
+            self.emg_writer = None
+
+    def flatten(self, l):
+        for el in l:
+            if isinstance(el, collections.Iterable) and not (
+                    isinstance(el, (str, bytes))):
+                yield from self.flatten(el)
+            else:
+                yield el
 
 
 def main():
@@ -150,8 +195,10 @@ def main():
                     myo.myo.run(1)
                 except serial.serialutil.SerialException:
                     print("Error! Myo exception! Rebooting ...")
+                    myo.myo.disconnect()
                     myo = Myo(args.tty, args.native, args.mac)
 
+                # Handle Pygame events
                 for ev in pygame.event.get():
                     if ev.type == pygame.QUIT:
                         raise KeyboardInterrupt()
@@ -160,10 +207,15 @@ def main():
                             raise KeyboardInterrupt()
                         elif ev.unicode == 'p':
                             myo.pause(toggle=True)
+                        elif ev.unicode == 'r':
+                            myo.record(toggle=True)
         except KeyboardInterrupt:
             pass
         finally:
             myo.myo.disconnect()
+
+            if myo.emg_file is not None:
+                myo.emg_file.close()
 
 
 if __name__ == "__main__":

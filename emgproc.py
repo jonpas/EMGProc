@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 import sys
+import os
 import argparse
 import time
 import serial
 import csv
-import collections
 
 import pygame
 from myo_raw import MyoRaw, DataCategory, EMGMode
@@ -23,6 +23,7 @@ VERBOSE = False
 class Plot():
     def __init__(self):
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("Electromyography Processor")
         self.font = pygame.font.Font(None, FONT_SIZE)
 
         self.last_vals = None
@@ -58,8 +59,9 @@ class Plot():
         # Control keybinds
         pause = self.font.render("P (pause)", True, pygame.Color("white"))
         self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
-        record = self.font.render("R (stop recording)" if recording else "R (record)",
-                                  True, pygame.Color("white"))
+        record = self.font.render("R (stop rec)" if recording else "R (record)",
+                                  True,
+                                  pygame.Color("red") if recording else pygame.Color("white"))
         self.screen.blit(record, (WINDOW_WIDTH - 150, 0))
 
         if frequency:
@@ -124,7 +126,8 @@ class Myo():
                            recording=self.recording)
 
         if self.recording:
-            self.emg_writer.writerow(self.flatten([timestamp, emg]))
+            data = [timestamp] + list(emg)
+            self.emg_writer.writerow(data)
 
         if VERBOSE:
             print("emg:", timestamp, emg, moving, characteristic_num)
@@ -151,22 +154,15 @@ class Myo():
             self.recording = state
 
         if self.recording:
-            self.emg_file = open(f"recordings/{time.strftime('%Y%m%d-%H%M%S')}_emg.csv", "w", newline="")
+            filename = f"recordings/{time.strftime('%Y%m%d-%H%M%S')}_emg.csv"
+            os.makedirs(os.path.dirname(filename), exist_ok=True)
+            self.emg_file = open(filename, "w", newline="")
             self.emg_writer = csv.writer(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
-            self.emg_writer.writerow(["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6",
-                                      "emg7", "emg8", "moving", "characteristic_num"])
-        else:
+            self.emg_writer.writerow(["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"])
+        elif self.emg_file is not None:
             self.emg_file.close()
             self.emg_file = None
             self.emg_writer = None
-
-    def flatten(self, l):
-        for el in l:
-            if isinstance(el, collections.Iterable) and not (
-                    isinstance(el, (str, bytes))):
-                yield from self.flatten(el)
-            else:
-                yield el
 
 
 def main():
@@ -219,9 +215,7 @@ def main():
         finally:
             # Cleanup
             myo.myo.disconnect()
-
-            if myo.emg_file is not None:
-                myo.emg_file.close()
+            myo.record(False)
 
 
 if __name__ == "__main__":

@@ -6,17 +6,19 @@ import argparse
 import time
 import serial
 import csv
+import math
 
 import pygame
 from myo_raw import MyoRaw, DataCategory, EMGMode
 
 
 WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 600
+WINDOW_HEIGHT = 800
 PLOT_SCROLL = 5  # higher is faster
-SUBPLOTS = 8
+CHANNELS = 8
 FONT_SIZE = 25
 CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
+RMS_WINDOW_SIZE = 50
 
 VERBOSE = False
 
@@ -29,44 +31,58 @@ class Plotter():
         self.font = pygame.font.Font(None, FONT_SIZE)
 
         self.live = live
-        self.last_vals = None
 
-    def plot(self, vals, frequency=None, recording=False):
-        if self.last_vals is None:
-            self.last_vals = vals
+        self.last_values = None
+        self.last_rms_values = None
+
+    def plot(self, values, rms_values=[], frequency=None, recording=False):
+        if self.last_values is None:
+            self.last_values = values
+            self.last_rms_values = rms_values
             return
 
         self.screen.scroll(-PLOT_SCROLL)
         self.screen.fill(pygame.Color("black"), (WINDOW_WIDTH - PLOT_SCROLL, 0, WINDOW_WIDTH, WINDOW_HEIGHT))
+        self.screen.fill(pygame.Color("black"), (0, 0, 60, WINDOW_HEIGHT))
+        self.clear_top()
 
-        for i, (u, v) in enumerate(zip(self.last_vals, vals)):
-            # Signal
-            pygame.draw.line(self.screen, pygame.Color("green"),
-                             (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
-                             (WINDOW_WIDTH, self.subplot_height(i, v)))
-
-            # Subplot base
+        # Subplot base
+        for i in range(CHANNELS):
             base_height = self.subplot_height(i)
-            pygame.draw.line(self.screen, pygame.Color("white"),
+            pygame.draw.line(self.screen, pygame.Color("grey"),
                              (WINDOW_WIDTH - PLOT_SCROLL, base_height),
                              (WINDOW_WIDTH, base_height))
 
             emg = self.font.render(f"EMG {i}", True, pygame.Color("blue"))
-            self.screen.fill(pygame.Color("black"),  # Clear old subplot name
-                             (0, base_height - FONT_SIZE // 2, 75, FONT_SIZE))
             self.screen.blit(emg, (0, base_height - FONT_SIZE // 2))
 
-        self.clear_top()
+        # Raw signal
+        for i, (u, v) in enumerate(zip(self.last_values, values)):
+            pygame.draw.line(self.screen, pygame.Color("white"),
+                             (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
+                             (WINDOW_WIDTH, self.subplot_height(i, v)))
+
+        # Processed signals
+        if rms_values:
+            for i, (u, v) in enumerate(zip(self.last_rms_values, rms_values)):
+                pygame.draw.line(self.screen, pygame.Color("green"),
+                                 (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
+                                 (WINDOW_WIDTH, self.subplot_height(i, v)))
+
+        # Information
         if frequency:
             self.render_frequency(frequency)
         self.render_mode()
         self.render_controls(recording)
 
         pygame.display.flip()
-        self.last_vals = vals
+
+        self.last_values = values
+        self.last_rms_values = rms_values
 
     def subplot_height(self, i, value=0):
-        return int(WINDOW_HEIGHT / (SUBPLOTS + 1) * (i + 1 - value))
+        scaled_value = value * 1.5
+        return int(WINDOW_HEIGHT / (CHANNELS + 1) * (i + 1 - scaled_value))
 
     def clear_top(self):
         self.screen.fill(pygame.Color("black"), (0, 0, WINDOW_WIDTH, FONT_SIZE))
@@ -111,8 +127,10 @@ class Plotter():
 
 # Interface for data streaming from either live Myo device or recorded playback
 class Stream():
-    def __init__(self):
+    def __init__(self, do_rms=False):
+        self.do_rms = do_rms
         self.plotter = None  # Late setup (display modes)
+
         self.paused = False
         self.ended = False
 
@@ -120,18 +138,31 @@ class Stream():
         self.times = []
         self.frequency = 0
 
+        # RMS
+        self.rms_window = []
+
     def create_plot(self, live=False):
         self.plotter = Plotter(live=live)
 
     def plot(self, data, recording=False):
-        # Track effective frequency (framerate)
+        self.calc_frequency()
+
+        # Processing
+        rms_data = []
+        if self.do_rms:
+            rms_data = self.rms(data)
+
+        if not self.paused:
+            self.plotter.plot([x / 500. for x in data],
+                              rms_values=[x / 500. for x in rms_data],
+                              frequency=self.frequency,
+                              recording=recording)
+
+    def calc_frequency(self):
         self.times.append(time.time())
         if len(self.times) >= 100:
             self.frequency = int((len(self.times) - 1) / (self.times[-1] - self.times[0]))
             self.times.clear()
-
-        if not self.paused:
-            self.plotter.plot(data, frequency=self.frequency, recording=recording)
 
     def pause(self, state=False, toggle=False):
         if toggle:
@@ -145,6 +176,31 @@ class Stream():
     def end(self):
         self.ended = True
         self.plotter.end()
+
+    # Processing
+    def rms(self, data):
+        # Gather samples, up to RMS_WINDOW_SIZE
+        self.rms_window.append(data)
+        if len(self.rms_window) >= RMS_WINDOW_SIZE:
+            self.rms_window.pop(0)
+
+        # Calculate RMS for each channel
+        rms_data = [0] * CHANNELS
+        for channel in range(CHANNELS):
+            data_channel = [item[channel] for item in self.rms_window]
+            rms_data[channel] = self.calc_rms(data_channel)
+
+        if VERBOSE:
+            print("rms:", rms_data)
+
+        return rms_data
+
+    def calc_rms(self, samples):
+        total = 0
+        for sample in samples:
+            total += sample**2
+
+        return math.sqrt(1.0 / RMS_WINDOW_SIZE * total)
 
 
 # Live Myo device interface
@@ -182,10 +238,11 @@ class Myo():
         # myo.vibrate(1)
 
     def handle_emg(self, timestamp, emg, moving, characteristic_num):
-        self.stream.plot([e / 500. for e in emg], recording=self.recording)
+        emg = list(emg)
+        self.stream.plot(emg, recording=self.recording)
 
         if self.recording:
-            data = [timestamp] + list(emg)
+            data = [timestamp] + emg
             self.emg_writer.writerow(data)
 
         if VERBOSE:
@@ -251,8 +308,8 @@ class Playback():
         if not self.stream.paused:
             try:
                 data = next(self.emg_reader)
-                timestamp, emg = data[0], tuple(map(int, data[1:]))
-                self.stream.plot([e / 500. for e in emg])
+                timestamp, emg = data[0], list(map(int, data[1:]))
+                self.stream.plot(emg)
 
                 if VERBOSE:
                     print("[playback] emg:", timestamp, emg)
@@ -263,14 +320,21 @@ class Playback():
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description="Electromyography Processor")
+
     group1 = parser.add_mutually_exclusive_group()
     group1.add_argument("-r", "--recording", default=None, help="Playback recorded Myo data stream")
     group1.add_argument("-s", "--sleep", default=False, action="store_true", help="Put Myo into deep sleep (turn off)")
+
+    parser.add_argument("--rms", default=False, action="store_true",
+                        help="Preprocess data stream using root mean square smoothing")
+
     group2 = parser.add_mutually_exclusive_group()
     group2.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
     group2.add_argument("--native", default=False, action="store_true", help="Use a native Bluetooth stack")
+
     parser.add_argument("--mac", default=None, help="Myo MAC address (arbitrarily detected if omitted)")
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="Verbose output")
+
     args = parser.parse_args()
 
     if args.verbose:
@@ -280,7 +344,7 @@ def main():
     live_myo = args.recording is None
 
     # Setup common stream interface for Myo or Playback
-    stream = Stream()
+    stream = Stream(do_rms=args.rms)
 
     # Setup Myo or Playback
     if live_myo:

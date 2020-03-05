@@ -12,12 +12,15 @@ import pygame
 from myo_raw import MyoRaw, DataCategory, EMGMode
 
 
+# Graph
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 800
 PLOT_SCROLL = 5  # higher is faster
 CHANNELS = 8
 FONT_SIZE = 25
+# Data
 CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
+# Processing
 RMS_WINDOW_SIZE = 50
 
 VERBOSE = False

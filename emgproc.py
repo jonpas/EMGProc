@@ -59,7 +59,7 @@ class Plotter():
         # Subplot base
         for i in range(CHANNELS):
             base_height = self.subplot_height(i)
-            pygame.draw.line(self.screen, pygame.Color("grey"),
+            pygame.draw.line(self.screen, pygame.Color("darkgrey"),
                              (WINDOW_WIDTH - PLOT_SCROLL, base_height),
                              (WINDOW_WIDTH, base_height))
 
@@ -68,7 +68,7 @@ class Plotter():
 
         # Raw signal
         for i, (u, v) in enumerate(zip(self.last_values, values)):
-            pygame.draw.line(self.screen, pygame.Color("white"),
+            pygame.draw.line(self.screen, pygame.Color("darkslategrey"),
                              (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
                              (WINDOW_WIDTH, self.subplot_height(i, v)))
 

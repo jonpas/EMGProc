@@ -12,7 +12,7 @@ import pygame
 from myo_raw import MyoRaw, DataCategory, EMGMode
 
 import numpy as np
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, FastICA
 
 
 # Graph
@@ -26,6 +26,7 @@ CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "
 # Processing
 RMS_WINDOW_SIZE = 50
 PCA_COMPONENTS = 6
+ICA_COMPONENTS = 6
 
 VERBOSE = False
 
@@ -41,13 +42,13 @@ class Plotter():
 
         self.last_values = None
         self.last_rms_values = None
-        self.last_pca_values = None
+        self.last_ca_values = None
 
-    def plot(self, values, rms_values=[], pca_values=[], frequency=None, recording=False):
+    def plot(self, values, rms_values=[], ca_values=[], frequency=None, recording=False):
         if self.last_values is None:
             self.last_values = values
             self.last_rms_values = rms_values
-            self.last_pca_values = pca_values
+            self.last_ca_values = ca_values
             return
 
         self.screen.scroll(-PLOT_SCROLL)
@@ -78,8 +79,8 @@ class Plotter():
                                  (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
                                  (WINDOW_WIDTH, self.subplot_height(i, v)))
 
-        if pca_values:
-            for i, (u, v) in enumerate(zip(self.last_pca_values, pca_values)):
+        if ca_values:
+            for i, (u, v) in enumerate(zip(self.last_ca_values, ca_values)):
                 pygame.draw.line(self.screen, pygame.Color("green"),
                                  (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
                                  (WINDOW_WIDTH, self.subplot_height(i, v)))
@@ -94,7 +95,7 @@ class Plotter():
 
         self.last_values = values
         self.last_rms_values = rms_values
-        self.last_pca_values = pca_values
+        self.last_ca_values = ca_values
 
     def subplot_height(self, i, value=0):
         scaled_value = value * 1.5
@@ -143,9 +144,10 @@ class Plotter():
 
 # Interface for data streaming from either live Myo device or recorded playback
 class Stream():
-    def __init__(self, do_rms=False, pca_train_set=[]):
+    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[]):
         self.do_rms = do_rms
         self.pca = self.init_pca(pca_train_set) if pca_train_set else None
+        self.ica = self.init_ica(ica_train_set) if ica_train_set else None
 
         self.plotter = None  # Late setup (display modes)
 
@@ -167,17 +169,19 @@ class Stream():
 
         # Processing
         rms_data = []
-        if self.do_rms or self.pca is not None:
+        if self.do_rms or self.pca is not None or self.ica is not None:
             rms_data = self.rms(data)
 
-        pca_data = []
+        ca_data = []
         if self.pca is not None:
-            pca_data = self.calc_pca(rms_data)
+            ca_data = self.calc_pca(rms_data)
+        elif self.ica is not None:
+            ca_data = self.calc_ica(rms_data)
 
         if not self.paused:
             self.plotter.plot([x / 500. for x in data],
                               rms_values=[x / 500. for x in rms_data] if self.do_rms else [],
-                              pca_values=[x / 500. for x in pca_data],
+                              ca_values=[x / 500. for x in ca_data],
                               frequency=self.frequency,
                               recording=recording)
 
@@ -225,7 +229,7 @@ class Stream():
 
         return math.sqrt(1.0 / RMS_WINDOW_SIZE * total)
 
-    def init_pca(self, train_set):
+    def read_ca_train_set(self, train_set):
         # Read training data files
         emg_data = []
 
@@ -248,7 +252,10 @@ class Stream():
 
             emg_file.close()
 
-        emg_data = np.array(emg_data)
+        return np.array(emg_data)
+
+    def init_pca(self, train_set):
+        emg_data = self.read_ca_train_set(train_set)
 
         # Initialize and train
         pca = PCA(n_components=PCA_COMPONENTS)
@@ -257,13 +264,32 @@ class Stream():
         return pca
 
     def calc_pca(self, rms_data):
-        emg_data = np.array(rms_data).reshape(1, -1)
-        pca_data = self.pca.transform(emg_data)[0]
+        emg_data = np.array(rms_data).reshape(1, -1)  # Reshape to 1 sample, 8 features
+        pca_data = self.pca.transform(emg_data)[0]  # Take 1 sample from array of samples (contains only one)
 
         if VERBOSE:
             print("pca:", pca_data)
 
         return pca_data
+
+    def init_ica(self, train_set):
+        emg_data = self.read_ca_train_set(train_set)
+
+        # Initialize and train
+        ica = FastICA(n_components=ICA_COMPONENTS)
+        ica.fit(emg_data)
+
+        return ica
+
+    def calc_ica(self, rms_data):
+        emg_data = np.array(rms_data).reshape(1, -1)  # Reshape to 1 sample, 8 features
+        ica_data = self.ica.transform(emg_data)[0]  # Take 1 sample from array of samples (contains only one)
+        ica_data *= 5000  # Scale up
+
+        if VERBOSE:
+            print("ica:", ica_data)
+
+        return ica_data
 
 
 # Live Myo device interface
@@ -390,8 +416,11 @@ def main():
 
     parser.add_argument("--rms", default=False, action="store_true",
                         help="Preprocess data stream using Root Mean Square (RMS) smoothing")
-    parser.add_argument("--pca", nargs="+",
+    group2 = parser.add_mutually_exclusive_group()
+    group2.add_argument("--pca", nargs="+",
                         help="Preprocess data stream using Principal Component Analysis (PCA)")
+    group2.add_argument("--ica", nargs="+",
+                        help="Preprocess data stream using Independent Component Analysis (ICA)")
 
     group3 = parser.add_mutually_exclusive_group()
     group3.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
@@ -409,7 +438,7 @@ def main():
     live_myo = args.recording is None
 
     # Setup common stream interface for Myo or Playback
-    stream = Stream(do_rms=args.rms, pca_train_set=args.pca)
+    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica)
 
     # Setup Myo or Playback
     if live_myo:

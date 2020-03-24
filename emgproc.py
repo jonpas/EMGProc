@@ -25,8 +25,8 @@ FONT_SIZE = 25
 CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
 # Processing
 RMS_WINDOW_SIZE = 50
-PCA_COMPONENTS = 6
-ICA_COMPONENTS = 6
+PCA_COMPONENTS = 3
+ICA_COMPONENTS = 3
 
 VERBOSE = False
 
@@ -146,8 +146,6 @@ class Plotter():
 class Stream():
     def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[]):
         self.do_rms = do_rms
-        self.pca = self.init_pca(pca_train_set) if pca_train_set else None
-        self.ica = self.init_ica(ica_train_set) if ica_train_set else None
 
         self.plotter = None  # Late setup (display modes)
 
@@ -158,8 +156,10 @@ class Stream():
         self.times = []
         self.frequency = 0
 
-        # RMS
+        # Processing
         self.rms_window = []
+        self.pca = self.init_pca(pca_train_set) if pca_train_set else None
+        self.ica = self.init_ica(ica_train_set) if ica_train_set else None
 
     def create_plot(self, live=False):
         self.plotter = Plotter(live=live)
@@ -170,7 +170,7 @@ class Stream():
         # Processing
         rms_data = []
         if self.do_rms or self.pca is not None or self.ica is not None:
-            rms_data = self.rms(data)
+            rms_data = self.calc_rms(data)
 
         ca_data = []
         if self.pca is not None:
@@ -205,7 +205,7 @@ class Stream():
         self.plotter.end()
 
     # Processing
-    def rms(self, data):
+    def calc_rms(self, data):
         # Gather samples, up to RMS_WINDOW_SIZE
         self.rms_window.append(data)
         if len(self.rms_window) >= RMS_WINDOW_SIZE:
@@ -214,20 +214,14 @@ class Stream():
         # Calculate RMS for each channel
         rms_data = [0] * CHANNELS
         for channel in range(CHANNELS):
-            data_channel = [item[channel] for item in self.rms_window]
-            rms_data[channel] = self.calc_rms(data_channel)
+            samples = [item[channel] for item in self.rms_window]
+            total = sum([sample ** 2 for sample in samples])
+            rms_data[channel] = math.sqrt(1.0 / RMS_WINDOW_SIZE * total)
 
         if VERBOSE:
             print("rms:", rms_data)
 
         return rms_data
-
-    def calc_rms(self, samples):
-        total = 0
-        for sample in samples:
-            total += sample**2
-
-        return math.sqrt(1.0 / RMS_WINDOW_SIZE * total)
 
     def read_ca_train_set(self, train_set):
         # Read training data files
@@ -246,10 +240,11 @@ class Stream():
                     while True:
                         data = next(emg_reader)
                         _, emg = data[0], list(map(int, data[1:]))
-                        emg_data.append(emg)
+                        emg_data.append(self.calc_rms(emg))
                 except StopIteration:
                     pass
 
+            self.rms_window.clear()
             emg_file.close()
 
         return np.array(emg_data)
@@ -411,16 +406,13 @@ def main():
     parser = argparse.ArgumentParser(description="Electromyography Processor")
 
     group1 = parser.add_mutually_exclusive_group()
-    group1.add_argument("-r", "--recording", default=None, help="Playback recorded Myo data stream")
+    group1.add_argument("-r", "--recording", default=None, metavar=("REC"), help="Playback recorded Myo data stream")
     group1.add_argument("-s", "--sleep", default=False, action="store_true", help="Put Myo into deep sleep (turn off)")
 
-    parser.add_argument("--rms", default=False, action="store_true",
-                        help="Preprocess data stream using Root Mean Square (RMS) smoothing")
+    parser.add_argument("--rms", default=False, action="store_true", help="Preprocess data stream using RMS smoothing")
     group2 = parser.add_mutually_exclusive_group()
-    group2.add_argument("--pca", nargs="+",
-                        help="Preprocess data stream using Principal Component Analysis (PCA)")
-    group2.add_argument("--ica", nargs="+",
-                        help="Preprocess data stream using Independent Component Analysis (ICA)")
+    group2.add_argument("--pca", nargs="+", metavar=("REC"), help="Preprocess data stream using PCA training set")
+    group2.add_argument("--ica", nargs="+", metavar=("REC"), help="Preprocess data stream using ICA training set")
 
     group3 = parser.add_mutually_exclusive_group()
     group3.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")

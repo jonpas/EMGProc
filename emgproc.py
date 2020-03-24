@@ -271,7 +271,7 @@ class Stream():
         emg_data = self.read_ca_train_set(train_set)
 
         # Initialize and train
-        ica = FastICA(n_components=ICA_COMPONENTS)
+        ica = FastICA(n_components=ICA_COMPONENTS, random_state=0)
         ica.fit(emg_data)
 
         return ica

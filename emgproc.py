@@ -161,8 +161,9 @@ class Plotter():
 
 # Interface for data streaming from either live Myo device or recorded playback
 class Stream():
-    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[]):
+    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], classify=False):
         self.do_rms = do_rms
+        self.classify = classify
 
         self.plotter = None  # Late setup (display modes)
 
@@ -195,10 +196,15 @@ class Stream():
         elif self.ica is not None:
             ca_data = self.calc_ica(rms_data)
 
+        class_move = ""
+        if self.classify:
+            class_move = "/"  # TODO
+
         if not self.paused:
             self.plotter.plot([x / 500. for x in data],
                               rms_values=[x / 500. for x in rms_data],
                               ca_values=[x / 500. for x in ca_data],
+                              class_move=class_move,
                               frequency=self.frequency,
                               recording=recording)
 
@@ -431,6 +437,8 @@ def main():
     group2.add_argument("--pca", nargs="+", metavar=("REC"), help="preprocess data stream using PCA training set")
     group2.add_argument("--ica", nargs="+", metavar=("REC"), help="preprocess data stream using ICA training set")
 
+    parser.add_argument("-c", "--classify", default=False, action="store_true", help="classify using SVM")
+
     group3 = parser.add_mutually_exclusive_group()
     group3.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
     group3.add_argument("--native", default=False, action="store_true", help="use a native Bluetooth stack")
@@ -447,7 +455,7 @@ def main():
     live_myo = args.recording is None
 
     # Setup common stream interface for Myo or Playback
-    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica)
+    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, classify=args.classify)
 
     # Setup Myo or Playback
     if live_myo:

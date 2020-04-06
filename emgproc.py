@@ -18,7 +18,7 @@ from sklearn.decomposition import PCA, FastICA
 # Graph
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 800
-PLOT_SCROLL = 5  # higher is faster
+PLOT_SCROLL = 3  # higher is faster
 CHANNELS = 8
 FONT_SIZE = 25
 # Data
@@ -43,28 +43,38 @@ class Plotter():
         self.last_values = None
         self.last_rms_values = None
         self.last_ca_values = None
+        self.plots = 0
 
-    def plot(self, values, rms_values=[], ca_values=[], frequency=None, recording=False):
+    def plot(self, values, rms_values=[], ca_values=[], frequency=None, recording=False, class_move=""):
         if self.last_values is None:
             self.last_values = values
             self.last_rms_values = rms_values
             self.last_ca_values = ca_values
+            self.plots = len(values) + len(ca_values)
             return
 
         self.screen.scroll(-PLOT_SCROLL)
         self.screen.fill(pygame.Color("black"), (WINDOW_WIDTH - PLOT_SCROLL, 0, WINDOW_WIDTH, WINDOW_HEIGHT))
         self.screen.fill(pygame.Color("black"), (0, 0, 60, WINDOW_HEIGHT))
-        self.clear_top()
+        self.clear_info()
 
         # Subplot base
-        for i in range(CHANNELS):
+        for i in range(self.plots):
             base_height = self.subplot_height(i)
             pygame.draw.line(self.screen, pygame.Color("darkgrey"),
                              (WINDOW_WIDTH - PLOT_SCROLL, base_height),
                              (WINDOW_WIDTH, base_height))
 
-            emg = self.font.render(f"EMG {i}", True, pygame.Color("blue"))
-            self.screen.blit(emg, (0, base_height - FONT_SIZE // 2))
+            if i < 8:  # Raw / RMS
+                plot_text = self.font.render(f"RAW {i}", True, pygame.Color("darkgrey"))
+                rms_offset = 10 if rms_values else 0
+                if rms_values:
+                    plot_rms = self.font.render(f"RMS {i}", True, pygame.Color("blue"))
+                    self.screen.blit(plot_rms, (0, base_height - rms_offset - FONT_SIZE // 2))
+                self.screen.blit(plot_text, (0, base_height + rms_offset - FONT_SIZE // 2))
+            else:  # CA
+                plot_text = self.font.render(f"   CA {i - len(values)}", True, pygame.Color("green"))
+                self.screen.blit(plot_text, (0, base_height - FONT_SIZE // 2))
 
         # Raw signal
         for i, (u, v) in enumerate(zip(self.last_values, values)):
@@ -82,14 +92,16 @@ class Plotter():
         if ca_values:
             for i, (u, v) in enumerate(zip(self.last_ca_values, ca_values)):
                 pygame.draw.line(self.screen, pygame.Color("green"),
-                                 (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i, u)),
-                                 (WINDOW_WIDTH, self.subplot_height(i, v)))
+                                 (WINDOW_WIDTH - PLOT_SCROLL, self.subplot_height(i + len(rms_values), u)),
+                                 (WINDOW_WIDTH, self.subplot_height(i + len(rms_values), v)))
 
         # Information
         if frequency:
             self.render_frequency(frequency)
         self.render_mode()
         self.render_controls(recording)
+        if class_move:
+            self.render_classification(class_move)
 
         pygame.display.flip()
 
@@ -99,16 +111,17 @@ class Plotter():
 
     def subplot_height(self, i, value=0):
         scaled_value = value * 1.5
-        return int(WINDOW_HEIGHT / (CHANNELS + 1) * (i + 1 - scaled_value))
+        return int(WINDOW_HEIGHT / (self.plots + 1) * (i + 1 - scaled_value))
 
-    def clear_top(self):
+    def clear_info(self):
         self.screen.fill(pygame.Color("black"), (0, 0, WINDOW_WIDTH, FONT_SIZE))
+        self.screen.fill(pygame.Color("black"), (0, WINDOW_HEIGHT - FONT_SIZE, WINDOW_WIDTH, WINDOW_HEIGHT))
 
     def render_mode(self):
         mode_text = "LIVE" if self.live else "PLAYBACK"
         mode = self.font.render("LIVE" if self.live else "PLAYBACK",
                                 True, pygame.Color("green"))
-        self.screen.blit(mode, (WINDOW_WIDTH - WINDOW_WIDTH // 2 - len(mode_text) * FONT_SIZE // 2, 0))
+        self.screen.blit(mode, (WINDOW_WIDTH // 2 - len(mode_text) * FONT_SIZE // 2, 0))
 
     def render_frequency(self, frequency):
         framerate = self.font.render(f"{frequency} Hz", True,
@@ -125,8 +138,12 @@ class Plotter():
                                       pygame.Color("red") if recording else pygame.Color("white"))
             self.screen.blit(record, (WINDOW_WIDTH - 150, 0))
 
+    def render_classification(self, class_move):
+        move = self.font.render(f"Classification: {class_move}", True, pygame.Color("green"))
+        self.screen.blit(move, (WINDOW_WIDTH // 2 - 225, WINDOW_HEIGHT - FONT_SIZE))
+
     def pause(self):
-        self.clear_top()
+        self.clear_info()
         pause = self.font.render("P (resume)", True, pygame.Color("red"))
         self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
 
@@ -134,7 +151,7 @@ class Plotter():
         pygame.display.flip()
 
     def end(self):
-        self.clear_top()
+        self.clear_info()
         pause = self.font.render("END", True, pygame.Color("red"))
         self.screen.blit(pause, (WINDOW_WIDTH - 250, 0))
 
@@ -180,7 +197,7 @@ class Stream():
 
         if not self.paused:
             self.plotter.plot([x / 500. for x in data],
-                              rms_values=[x / 500. for x in rms_data] if self.do_rms else [],
+                              rms_values=[x / 500. for x in rms_data],
                               ca_values=[x / 500. for x in ca_data],
                               frequency=self.frequency,
                               recording=recording)
@@ -406,20 +423,20 @@ def main():
     parser = argparse.ArgumentParser(description="Electromyography Processor")
 
     group1 = parser.add_mutually_exclusive_group()
-    group1.add_argument("-r", "--recording", default=None, metavar=("REC"), help="Playback recorded Myo data stream")
-    group1.add_argument("-s", "--sleep", default=False, action="store_true", help="Put Myo into deep sleep (turn off)")
+    group1.add_argument("-r", "--recording", default=None, metavar=("REC"), help="playback recorded Myo data stream")
+    group1.add_argument("-s", "--sleep", default=False, action="store_true", help="put Myo into deep sleep (turn off)")
 
-    parser.add_argument("--rms", default=False, action="store_true", help="Preprocess data stream using RMS smoothing")
+    parser.add_argument("--rms", default=False, action="store_true", help="preprocess data stream using RMS smoothing")
     group2 = parser.add_mutually_exclusive_group()
-    group2.add_argument("--pca", nargs="+", metavar=("REC"), help="Preprocess data stream using PCA training set")
-    group2.add_argument("--ica", nargs="+", metavar=("REC"), help="Preprocess data stream using ICA training set")
+    group2.add_argument("--pca", nargs="+", metavar=("REC"), help="preprocess data stream using PCA training set")
+    group2.add_argument("--ica", nargs="+", metavar=("REC"), help="preprocess data stream using ICA training set")
 
     group3 = parser.add_mutually_exclusive_group()
     group3.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
-    group3.add_argument("--native", default=False, action="store_true", help="Use a native Bluetooth stack")
+    group3.add_argument("--native", default=False, action="store_true", help="use a native Bluetooth stack")
 
     parser.add_argument("--mac", default=None, help="Myo MAC address (arbitrarily detected if omitted)")
-    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="Verbose output")
+    parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose output")
 
     args = parser.parse_args()
 

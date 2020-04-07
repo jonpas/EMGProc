@@ -45,7 +45,7 @@ class Plotter():
         self.last_ca_values = None
         self.plots = 0
 
-    def plot(self, values, rms_values=[], ca_values=[], frequency=None, recording=False, class_move=""):
+    def plot(self, values, rms_values=[], ca_values=[], frequency=None, recording=False, gesture=""):
         if self.last_values is None:
             self.last_values = values
             self.last_rms_values = rms_values
@@ -100,8 +100,8 @@ class Plotter():
             self.render_frequency(frequency)
         self.render_mode()
         self.render_controls(recording)
-        if class_move:
-            self.render_classification(class_move)
+        if gesture:
+            self.render_classification(gesture)
 
         pygame.display.flip()
 
@@ -138,9 +138,9 @@ class Plotter():
                                       pygame.Color("red") if recording else pygame.Color("white"))
             self.screen.blit(record, (WINDOW_WIDTH - 150, 0))
 
-    def render_classification(self, class_move):
-        move = self.font.render(f"Classification: {class_move}", True, pygame.Color("green"))
-        self.screen.blit(move, (WINDOW_WIDTH // 2 - 225, WINDOW_HEIGHT - FONT_SIZE))
+    def render_classification(self, gesture):
+        plot_gesture = self.font.render(f"Classification: {gesture}", True, pygame.Color("green"))
+        self.screen.blit(plot_gesture, (WINDOW_WIDTH // 2 - 225, WINDOW_HEIGHT - FONT_SIZE))
 
     def pause(self):
         self.clear_info()
@@ -196,15 +196,15 @@ class Stream():
         elif self.ica is not None:
             ca_data = self.calc_ica(rms_data)
 
-        class_move = ""
+        gesture = ""
         if self.classify:
-            class_move = "/"  # TODO
+            gesture = "/"  # TODO
 
         if not self.paused:
             self.plotter.plot([x / 500. for x in data],
                               rms_values=[x / 500. for x in rms_data],
                               ca_values=[x / 500. for x in ca_data],
-                              class_move=class_move,
+                              gesture=gesture,
                               frequency=self.frequency,
                               recording=recording)
 

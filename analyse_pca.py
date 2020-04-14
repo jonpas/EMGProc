@@ -8,10 +8,7 @@ import math
 import numpy as np
 from sklearn.decomposition import PCA
 
-
-CHANNELS = 8
-CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
-RMS_WINDOW_SIZE = 50
+import emgproc
 
 
 # Parse arguments
@@ -33,7 +30,7 @@ for file in args.files:
     rms_window = []
 
     header = next(emg_reader)
-    if header == CSV_HEADER_EMG:
+    if header == emgproc.CSV_HEADER_EMG:
         try:
             while True:
                 data = next(emg_reader)
@@ -41,15 +38,15 @@ for file in args.files:
 
                 # Gather samples, up to RMS_WINDOW_SIZE
                 rms_window.append(emg)
-                if len(rms_window) >= RMS_WINDOW_SIZE:
+                if len(rms_window) >= emgproc.RMS_WINDOW_SIZE:
                     rms_window.pop(0)
 
                 # Calculate RMS for each channel
-                rms_data = [0] * CHANNELS
-                for channel in range(CHANNELS):
+                rms_data = [0] * emgproc.CHANNELS
+                for channel in range(emgproc.CHANNELS):
                     samples = [item[channel] for item in rms_window]
                     total = sum([sample ** 2 for sample in samples])
-                    rms_data[channel] = math.sqrt(1.0 / RMS_WINDOW_SIZE * total)
+                    rms_data[channel] = math.sqrt(1.0 / emgproc.RMS_WINDOW_SIZE * total)
 
                 emg_data.append(rms_data)
 

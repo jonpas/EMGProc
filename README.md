@@ -2,9 +2,48 @@
 
 Electromyography Processing application at Neuro, Nano and Quantum Computing (slo. Nevro, Nano in Kvantno Računalništvo).
 
+Includes PCA analysis script and helper applications for processing conversions and model fitment.
 
-### Setup
+
+## Usage
+
+_Following are most useful usage patterns and do not describe all patterns of the application. Run with `-h` to show all available arguments._
+
+### Core
+
+- `$ emgproc.py` to read raw data at 200 Hz from Myo device.
+- `$ emgproc.py -r rec.csv` to playback a CSV recording at 200 Hz.
+- _All arguments support recorded and raw data._
+- `$ emgproc.py --rms` to smooth the data in real-time.
+- `$ emgproc.py --s` to put Myo into deep sleep (shut down).
+
+#### Visualizer Controls
+
+- `R` to record to a CSV file (using selected processing).
+- `P` to pause data reading.
+- `Q` to quit the application.
+
+
+### Processing
+
+PCA, ICA and SVM fitting and processing is available in real-time (with visualizer) as well as separate command line mode for conversions and fitting. Example training data is located in `training/` folder.
+
+Process data in real-time:
+  - `$ emgproc.py --pca *_raw.csv` fit at start using given training data.
+  - `$ emgproc.py --ica model.ica` given training model.
+
+Fit and save model to a file:
+  - `$ emgfit.py --pca *_raw.csv` creates `<timestamp>_model.pca`
+  - `$ emgfit.py --ica model.ica` creates `<timestamp>_model.ica`
+
+Convert recording to processed recording:
+  - `$ emgconvert.py example_raw.csv --pca *_raw.csv` creates `example_pca.csv`
+
+
+## Setup
 
 **Dependencies:**
-- [myo-raw](https://github.com/jonpas/myo-raw)
-- [Pygame](https://www.pygame.org/)
+- [scikit-learn](https://scikit-learn.org/)
+- [NumPy](https://numpy.org/) _(only `emgproc.py`)_
+- [myo-raw](https://github.com/jonpas/myo-raw) _(only `emgproc.py`)_
+- [Pygame](https://www.pygame.org/) _(only `emgproc.py`)_

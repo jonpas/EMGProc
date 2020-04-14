@@ -7,9 +7,7 @@ import time
 import serial
 import csv
 import math
-
-import pygame
-from myo_raw import MyoRaw, DataCategory, EMGMode
+import pickle
 
 import numpy as np
 from sklearn.decomposition import PCA, FastICA
@@ -23,6 +21,7 @@ CHANNELS = 8
 FONT_SIZE = 25
 # Data
 CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
+CSV_HEADER_CA = ["timestamp", "ca1", "ca2", "ca3"]
 # Processing
 RMS_WINDOW_SIZE = 50
 PCA_COMPONENTS = 3
@@ -34,6 +33,10 @@ VERBOSE = False
 # Plotting (Pygame) window interface
 class Plotter():
     def __init__(self, live=False):
+        if "pygame" not in sys.modules:
+            print("Error! pygame not loaded! Plotter not available for library use.")
+            return None
+
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
         pygame.display.set_caption("Electromyography Processor")
         self.font = pygame.font.Font(None, FONT_SIZE)
@@ -45,7 +48,7 @@ class Plotter():
         self.last_ca_values = None
         self.plots = 0
 
-    def plot(self, values, rms_values=[], ca_values=[], frequency=None, recording=False, gesture=""):
+    def plot(self, values, rms_values=[], ca_values=[], ca="", gesture="", frequency=None, recording=False):
         if self.last_values is None:
             self.last_values = values
             self.last_rms_values = rms_values
@@ -72,8 +75,8 @@ class Plotter():
                     plot_rms = self.font.render(f"RMS {i}", True, pygame.Color("blue"))
                     self.screen.blit(plot_rms, (0, base_height - rms_offset - FONT_SIZE // 2))
                 self.screen.blit(plot_text, (0, base_height + rms_offset - FONT_SIZE // 2))
-            else:  # CA
-                plot_text = self.font.render(f"   CA {i - len(values)}", True, pygame.Color("green"))
+            else:  # PCA/ICA
+                plot_text = self.font.render(f" {ca.upper()} {i - len(values)}", True, pygame.Color("green"))
                 self.screen.blit(plot_text, (0, base_height - FONT_SIZE // 2))
 
         # Raw signal
@@ -161,29 +164,22 @@ class Plotter():
 
 # Interface for data streaming from either live Myo device or recorded playback
 class Stream():
-    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], classify=False):
-        self.do_rms = do_rms
-        self.classify = classify
-
+    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], do_svm=False):
         self.plotter = None  # Late setup (display modes)
-
-        self.paused = False
-        self.ended = False
-
-        # Frequency measuring
-        self.times = []
-        self.frequency = 0
+        self.reset()
 
         # Processing
-        self.rms_window = []
+        self.do_rms = do_rms
         self.pca = self.init_pca(pca_train_set) if pca_train_set else None
         self.ica = self.init_ica(ica_train_set) if ica_train_set else None
+        self.do_svm = do_svm
 
     def create_plot(self, live=False):
         self.plotter = Plotter(live=live)
 
     def plot(self, data, recording=False):
-        self.calc_frequency()
+        if self.plotter is not None:
+            self.calc_frequency()
 
         # Processing
         rms_data = []
@@ -197,16 +193,19 @@ class Stream():
             ca_data = self.calc_ica(rms_data)
 
         gesture = ""
-        if self.classify:
+        if self.do_svm:
             gesture = "/"  # TODO
 
-        if not self.paused:
+        if not self.paused and self.plotter is not None:
             self.plotter.plot([x / 500. for x in data],
                               rms_values=[x / 500. for x in rms_data],
                               ca_values=[x / 500. for x in ca_data],
+                              ca="pca" if self.pca is not None else "ica",
                               gesture=gesture,
                               frequency=self.frequency,
                               recording=recording)
+
+        return rms_data, ca_data, gesture
 
     def calc_frequency(self):
         self.times.append(time.time())
@@ -225,7 +224,19 @@ class Stream():
 
     def end(self):
         self.ended = True
-        self.plotter.end()
+        if self.plotter is not None:
+            self.plotter.end()
+
+    def reset(self):
+        self.paused = False
+        self.ended = False
+
+        # Frequency measuring
+        self.times = []
+        self.frequency = 0
+
+        # Processing
+        self.rms_window = []
 
     # Processing
     def calc_rms(self, data):
@@ -242,12 +253,11 @@ class Stream():
             rms_data[channel] = math.sqrt(1.0 / RMS_WINDOW_SIZE * total)
 
         if VERBOSE:
-            print("rms:", rms_data)
+            print(f"rms: {rms_data}")
 
         return rms_data
 
     def read_ca_train_set(self, train_set):
-        # Read training data files
         emg_data = []
 
         for file in train_set:
@@ -272,12 +282,20 @@ class Stream():
 
         return np.array(emg_data)
 
-    def init_pca(self, train_set):
-        emg_data = self.read_ca_train_set(train_set)
+    def read_ca_model(self, model):
+        print(f"Reading model '{model}'...")
+        with open(model, "rb") as f:
+            return pickle.load(f)
 
-        # Initialize and train
-        pca = PCA(n_components=PCA_COMPONENTS)
-        pca.fit(emg_data)
+    def init_pca(self, train_set):
+        if isinstance(train_set, list):
+            emg_data = self.read_ca_train_set(train_set)
+
+            # Initialize and train
+            pca = PCA(n_components=PCA_COMPONENTS)
+            pca.fit(emg_data)
+        else:
+            pca = self.read_ca_model(train_set)
 
         return pca
 
@@ -286,16 +304,19 @@ class Stream():
         pca_data = self.pca.transform(emg_data)[0]  # Take 1 sample from array of samples (contains only one)
 
         if VERBOSE:
-            print("pca:", pca_data)
+            print(f"pca: {pca_data}")
 
         return pca_data
 
     def init_ica(self, train_set):
-        emg_data = self.read_ca_train_set(train_set)
+        if isinstance(train_set, list):
+            emg_data = self.read_ca_train_set(train_set)
 
-        # Initialize and train
-        ica = FastICA(n_components=ICA_COMPONENTS, random_state=0)
-        ica.fit(emg_data)
+            # Initialize and train
+            ica = FastICA(n_components=ICA_COMPONENTS, random_state=0)
+            ica.fit(emg_data)
+        else:
+            ica = self.read_ca_model(train_set)
 
         return ica
 
@@ -305,9 +326,18 @@ class Stream():
         ica_data *= 5000  # Scale up
 
         if VERBOSE:
-            print("ica:", ica_data)
+            print(f"ica: {ica_data}")
 
         return ica_data
+
+    def current_model(self):
+        if self.pca is not None:
+            return self.pca, "pca"
+        elif self.ica is not None:
+            return self.ica, "ica"
+        elif self.svm is not None:
+            return self.svm, "svm"
+        return None, ""
 
 
 # Live Myo device interface
@@ -318,6 +348,7 @@ class Myo():
         self.stream = stream
 
         self.recording = False
+        self.recording_type = self.init_recording()
 
         # Recording
         self.emg_file = None
@@ -346,14 +377,16 @@ class Myo():
 
     def handle_emg(self, timestamp, emg, moving, characteristic_num):
         emg = list(emg)
-        self.stream.plot(emg, recording=self.recording)
+        _, ca_data, _ = self.stream.plot(emg, recording=self.recording)
+
+        record_data = ca_data if ca_data else emg
 
         if self.recording:
-            data = [timestamp] + emg
-            self.emg_writer.writerow(data)
+            csv_data = [timestamp] + record_data
+            self.emg_writer.writerow(csv_data)
 
         if VERBOSE:
-            print("[myo] emg:", timestamp, emg)
+            print(f"[myo] {self.recording_type()}: {timestamp}, {record_data}")
 
     def handle_battery(self, timestamp, battery_level):
         if battery_level < 5:
@@ -362,7 +395,14 @@ class Myo():
             self.myo.set_leds([128, 128, 255], [128, 128, 255])  # purple logo, purple bar
 
         if VERBOSE:
-            print("[myo] battery level:", timestamp, battery_level)
+            print(f"[myo] battery level: {timestamp}, {battery_level}")
+
+    def init_recording(self):
+        if self.stream.pca is not None:
+            return "pca"
+        elif self.stream.ica is not None:
+            return "ica"
+        return "emg"
 
     def record(self, state=False, toggle=False):
         if toggle:
@@ -371,7 +411,7 @@ class Myo():
             self.recording = state
 
         if self.recording:
-            filename = f"recordings/{time.strftime('%Y%m%d-%H%M%S')}_emg.csv"
+            filename = f"recordings/{self.recording_type}/{time.strftime('%Y%m%d-%H%M%S')}.csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.emg_file = open(filename, "w", newline="")
             self.emg_writer = csv.writer(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
@@ -416,12 +456,15 @@ class Playback():
             try:
                 data = next(self.emg_reader)
                 timestamp, emg = data[0], list(map(int, data[1:]))
-                self.stream.plot(emg)
+                rms_data, ca_data, gesture = self.stream.plot(emg)
 
                 if VERBOSE:
-                    print("[playback] emg:", timestamp, emg)
+                    print(f"[playback] emg: {timestamp}, {emg}")
+
+                return timestamp, rms_data, ca_data, gesture
             except StopIteration:
                 self.stream.end()
+                return 0, [], [], ""
 
 
 def main():
@@ -429,24 +472,34 @@ def main():
     parser = argparse.ArgumentParser(description="Electromyography Processor")
 
     group1 = parser.add_mutually_exclusive_group()
-    group1.add_argument("-r", "--recording", default=None, metavar=("REC"), help="playback recorded Myo data stream")
+    group1.add_argument("-r", "--recording", default=None, metavar="REC", help="playback recorded Myo data stream")
     group1.add_argument("-s", "--sleep", default=False, action="store_true", help="put Myo into deep sleep (turn off)")
 
-    parser.add_argument("--rms", default=False, action="store_true", help="preprocess data stream using RMS smoothing")
+    parser.add_argument("--rms", default=False, action="store_true", help="process data stream using RMS smoothing")
     group2 = parser.add_mutually_exclusive_group()
-    group2.add_argument("--pca", nargs="+", metavar=("REC"), help="preprocess data stream using PCA training set")
-    group2.add_argument("--ica", nargs="+", metavar=("REC"), help="preprocess data stream using ICA training set")
-
-    parser.add_argument("-c", "--classify", default=False, action="store_true", help="classify using SVM")
-
+    group2.add_argument("--pca", nargs="+", metavar="REC", help="process data stream using PCA training set or model")
+    group2.add_argument("--ica", nargs="+", metavar="REC", help="process data stream using ICA training set or model")
     group3 = parser.add_mutually_exclusive_group()
-    group3.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
-    group3.add_argument("--native", default=False, action="store_true", help="use a native Bluetooth stack")
+    group3.add_argument("--svm", nargs="+", metavar="REC", help="classify using SVM training set or model")  # TODO
 
+    group4 = parser.add_mutually_exclusive_group()
+    group4.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
+    group4.add_argument("--native", default=False, action="store_true", help="use a native Bluetooth stack")
     parser.add_argument("--mac", default=None, help="Myo MAC address (arbitrarily detected if omitted)")
     parser.add_argument("-v", "--verbose", default=False, action="store_true", help="verbose output")
 
     args = parser.parse_args()
+
+    if args.svm and not args.pca and not args.ica:
+        parser.error("the following arguments are required for 'svm': 'pca' or 'ica'")
+
+    # Model was given instead of train set
+    if args.pca is not None and len(args.pca) == 1 and not args.pca[0].endswith(".csv"):
+        args.pca = args.pca[0]
+    if args.ica is not None and len(args.ica) == 1 and not args.ica[0].endswith(".csv"):
+        args.ica = args.ica[0]
+    if args.svm is not None and len(args.svm) == 1 and not args.svm[0].endswith(".csv"):
+        args.svm = args.svm[0]
 
     if args.verbose:
         global VERBOSE
@@ -455,14 +508,14 @@ def main():
     live_myo = args.recording is None
 
     # Setup common stream interface for Myo or Playback
-    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, classify=args.classify)
+    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, do_svm=args.svm)
 
     # Setup Myo or Playback
     if live_myo:
         try:
             myo = Myo(stream, args.tty, args.native, args.mac)
         except ValueError as e:
-            print("Error!", e)
+            print(f"Error! {e}")
             return 1
     else:
         playback = Playback(stream, args.recording)
@@ -520,4 +573,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import pygame
+    from myo_raw import MyoRaw, DataCategory, EMGMode
     sys.exit(main())

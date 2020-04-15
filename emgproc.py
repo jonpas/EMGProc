@@ -660,7 +660,9 @@ def main():
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" or os.environ.get("EMGPROC_USE_LIBS", False):
     import pygame
     from myo_raw import MyoRaw, DataCategory, EMGMode
+
+if __name__ == "__main__":
     sys.exit(main())

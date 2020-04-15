@@ -71,7 +71,7 @@ class Plotter():
                              (WINDOW_WIDTH - PLOT_SCROLL, base_height),
                              (WINDOW_WIDTH, base_height))
 
-            if i < 8:  # Raw / RMS
+            if i < 8 and self.plots >= 8:  # Raw / RMS
                 plot_text = self.font.render(f"RAW {i}", True, pygame.Color("darkgrey"))
                 rms_offset = 10 if rms_values else 0
                 if rms_values:
@@ -180,22 +180,25 @@ class Stream():
     def create_plot(self, live=False):
         self.plotter = Plotter(live=live)
 
-    def plot(self, data, recording=False):
+    def plot(self, data, ca=False, recording=False):
         if self.plotter is not None:
             self.calc_frequency()
 
         # Processing
-        rms_data = []
-        if self.do_rms or self.pca is not None or self.ica is not None:
-            rms_data = self.calc_rms(data)
+        rms_data, ca_data, gesture = [], [], ""
 
-        ca_data = []
-        if self.pca is not None:
-            ca_data = self.calc_pca(rms_data)
-        elif self.ica is not None:
-            ca_data = self.calc_ica(rms_data)
+        if ca:
+            ca_data, data = data, []
+        else:
+            if self.do_rms or self.pca is not None or self.ica is not None:
+                rms_data = self.calc_rms(data)
 
-        gesture = ""
+            ca_data = []
+            if self.pca is not None:
+                ca_data = self.calc_pca(rms_data)
+            elif self.ica is not None:
+                ca_data = self.calc_ica(rms_data)
+
         if self.svm is not None:
             gesture = self.class_svm(ca_data)
 
@@ -203,7 +206,7 @@ class Stream():
             self.plotter.plot([x / 500. for x in data],
                               rms_values=[x / 500. for x in rms_data],
                               ca_values=[x / 500. for x in ca_data],
-                              ca="pca" if self.pca is not None else "ica",
+                              ca=self.current_model()[1],
                               gesture=gesture,
                               frequency=self.frequency,
                               recording=recording)
@@ -378,7 +381,7 @@ class Stream():
         if isinstance(train_set, list):
             emg_data, classes = self.read_class_train_set(train_set, "svm")
 
-            svm = LinearSVC(random_state=0, max_iter=100000)
+            svm = LinearSVC(random_state=0, max_iter=100000, tol=0.00000000001)
             svm.fit(emg_data, classes)
         else:
             svm = self.read_model(train_set, "svm")
@@ -450,11 +453,15 @@ class Myo():
         emg = list(emg)
         _, ca_data, _ = self.stream.plot(emg, recording=self.recording)
 
-        record_data = ca_data if ca_data else emg
+        record_data = ca_data if ca_data is not [] else emg
 
         if self.recording:
-            csv_data = [timestamp] + record_data
-            self.emg_writer.writerow(csv_data)
+            csv_data = [timestamp]
+            csv_data.extend(ca_data)
+            try:
+                self.emg_writer.writerow(csv_data)
+            except AttributeError:
+                print("Error! Unable to write to CSV!")
 
         if VERBOSE:
             print(f"[myo] {self.recording_type()}: {timestamp}, {record_data}")
@@ -473,7 +480,7 @@ class Myo():
             return "pca"
         elif self.stream.ica is not None:
             return "ica"
-        return "emg"
+        return "raw"
 
     def record(self, state=False, toggle=False):
         if toggle:
@@ -486,7 +493,7 @@ class Myo():
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.emg_file = open(filename, "w", newline="")
             self.emg_writer = csv.writer(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
-            self.emg_writer.writerow(CSV_HEADER_EMG)
+            self.emg_writer.writerow(CSV_HEADER_EMG if self.recording_type == "raw" else CSV_HEADER_CA)
         elif self.emg_file is not None:
             self.emg_file.close()
             self.emg_file = None
@@ -499,6 +506,7 @@ class Playback():
         self.stream = stream
 
         self.valid = False
+        self.type = ""
         try:
             self.emg_file = open(filename, "r", newline="")
             self.emg_reader = csv.reader(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
@@ -515,6 +523,10 @@ class Playback():
             header = next(self.emg_reader)
             if header == CSV_HEADER_EMG:
                 self.valid = True
+                self.type = "raw"
+            if header == CSV_HEADER_CA:
+                self.valid = True
+                self.type = "ca"
         except StopIteration:
             pass
 
@@ -526,8 +538,12 @@ class Playback():
         if not self.stream.paused:
             try:
                 data = next(self.emg_reader)
-                timestamp, emg = data[0], list(map(int, data[1:]))
-                rms_data, ca_data, gesture = self.stream.plot(emg)
+                if self.type == "raw":
+                    timestamp, emg = data[0], list(map(int, data[1:]))
+                    rms_data, ca_data, gesture = self.stream.plot(emg)
+                else:
+                    timestamp, emg = data[0], list(map(float, data[1:]))
+                    rms_data, ca_data, gesture = self.stream.plot(emg, ca=True)
 
                 if VERBOSE:
                     print(f"[playback] emg: {timestamp}, {emg}")

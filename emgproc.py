@@ -11,6 +11,7 @@ import pickle
 
 import numpy as np
 from sklearn.decomposition import PCA, FastICA
+from sklearn.svm import LinearSVC
 
 
 # Graph
@@ -20,12 +21,14 @@ PLOT_SCROLL = 3  # higher is faster
 CHANNELS = 8
 FONT_SIZE = 25
 # Data
+FREQUENCY = 200  # Hz
 CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
 CSV_HEADER_CA = ["timestamp", "ca1", "ca2", "ca3"]
 # Processing
 RMS_WINDOW_SIZE = 50
 PCA_COMPONENTS = 3
 ICA_COMPONENTS = 3
+SVM_WINDOW_SIZE = FREQUENCY  # one classification per second
 
 VERBOSE = False
 
@@ -164,7 +167,7 @@ class Plotter():
 
 # Interface for data streaming from either live Myo device or recorded playback
 class Stream():
-    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], do_svm=False):
+    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], svm_train_set=[]):
         self.plotter = None  # Late setup (display modes)
         self.reset()
 
@@ -172,7 +175,7 @@ class Stream():
         self.do_rms = do_rms
         self.pca = self.init_pca(pca_train_set) if pca_train_set else None
         self.ica = self.init_ica(ica_train_set) if ica_train_set else None
-        self.do_svm = do_svm
+        self.svm = self.init_svm(svm_train_set) if svm_train_set else None
 
     def create_plot(self, live=False):
         self.plotter = Plotter(live=live)
@@ -193,8 +196,8 @@ class Stream():
             ca_data = self.calc_ica(rms_data)
 
         gesture = ""
-        if self.do_svm:
-            gesture = "/"  # TODO
+        if self.svm is not None:
+            gesture = self.class_svm(ca_data)
 
         if not self.paused and self.plotter is not None:
             self.plotter.plot([x / 500. for x in data],
@@ -237,6 +240,7 @@ class Stream():
 
         # Processing
         self.rms_window = []
+        self.svm_window = []
 
     # Processing
     def calc_rms(self, data):
@@ -257,11 +261,11 @@ class Stream():
 
         return rms_data
 
-    def read_ca_train_set(self, train_set):
+    def read_ca_train_set(self, train_set, stype="?"):
         emg_data = []
 
         for file in train_set:
-            print(f"Training with '{os.path.basename(file)}'...")
+            print(f"Training {stype.upper()} with '{file}'...")
 
             emg_file = open(file, "r", newline="")
             emg_reader = csv.reader(emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
@@ -273,29 +277,32 @@ class Stream():
                     while True:
                         data = next(emg_reader)
                         _, emg = data[0], list(map(int, data[1:]))
+
                         emg_data.append(self.calc_rms(emg))
                 except StopIteration:
                     pass
+            else:
+                print("-> Error! Incorrect header! Expected 'RAW'.")
 
             self.rms_window.clear()
             emg_file.close()
 
-        return np.array(emg_data)
+        return emg_data
 
-    def read_ca_model(self, model):
-        print(f"Reading model '{model}'...")
+    def read_model(self, model, stype="?"):
+        print(f"Reading {stype.upper()} model '{model}'...")
         with open(model, "rb") as f:
             return pickle.load(f)
 
     def init_pca(self, train_set):
         if isinstance(train_set, list):
-            emg_data = self.read_ca_train_set(train_set)
+            emg_data = self.read_ca_train_set(train_set, "pca")
 
             # Initialize and train
             pca = PCA(n_components=PCA_COMPONENTS)
             pca.fit(emg_data)
         else:
-            pca = self.read_ca_model(train_set)
+            pca = self.read_model(train_set, "pca")
 
         return pca
 
@@ -310,13 +317,13 @@ class Stream():
 
     def init_ica(self, train_set):
         if isinstance(train_set, list):
-            emg_data = self.read_ca_train_set(train_set)
+            emg_data = self.read_ca_train_set(train_set, "ica")
 
             # Initialize and train
             ica = FastICA(n_components=ICA_COMPONENTS, random_state=0)
             ica.fit(emg_data)
         else:
-            ica = self.read_ca_model(train_set)
+            ica = self.read_model(train_set, "ica")
 
         return ica
 
@@ -330,13 +337,77 @@ class Stream():
 
         return ica_data
 
+    def read_class_train_set(self, train_set, stype="?"):
+        emg_data = []
+        classes = []
+
+        for file in train_set:
+            classification = os.path.basename(file).split("_")[0]
+            print(f"Training {stype.upper()} '{classification}' with '{file}'...")
+
+            emg_subdata = []
+            emg_file = open(file, "r", newline="")
+            emg_reader = csv.reader(emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
+
+            # Read file
+            header = next(emg_reader)
+            if header == CSV_HEADER_CA:
+                try:
+                    while True:
+                        data = next(emg_reader)
+                        _, emg = data[0], list(map(float, data[1:]))
+
+                        emg_subdata.extend(emg)
+                except StopIteration:
+                    pass
+            else:
+                print("-> Error! Incorrect header! Expected 'PCA/ICA'.")
+
+            emg_file.close()
+
+            emg_data.append(emg_subdata)
+            classes.append(classification)
+
+        # Cut ends so all features have same amount of samples
+        minlen = SVM_WINDOW_SIZE
+        emg_data = [x[:minlen] for x in emg_data]
+
+        return emg_data, classes
+
+    def init_svm(self, train_set):
+        if isinstance(train_set, list):
+            emg_data, classes = self.read_class_train_set(train_set, "svm")
+
+            svm = LinearSVC(random_state=0, max_iter=100000)
+            svm.fit(emg_data, classes)
+        else:
+            svm = self.read_model(train_set, "svm")
+
+        return svm
+
+    def class_svm(self, ca_data):
+        # Gather samples, up to SVM_WINDOW_SIZE
+        self.svm_window.append(ca_data)
+        if len(self.svm_window) > SVM_WINDOW_SIZE:
+            self.svm_window.pop(0)
+
+            window = np.array(self.svm_window)
+            window = np.reshape(window, (window.shape[1], window.shape[0]))
+            svm_class = self.svm.predict(window)[0]  # Take 1 sample from array of samples (contains only one)
+
+            if VERBOSE:
+                print(f"svm: {svm_class}")
+
+            return svm_class
+        return ""
+
     def current_model(self):
-        if self.pca is not None:
+        if self.svm is not None:
+            return self.svm, "svm"
+        elif self.pca is not None:
             return self.pca, "pca"
         elif self.ica is not None:
             return self.ica, "ica"
-        elif self.svm is not None:
-            return self.svm, "svm"
         return None, ""
 
 
@@ -475,12 +546,12 @@ def main():
     group1.add_argument("-r", "--recording", default=None, metavar="REC", help="playback recorded Myo data stream")
     group1.add_argument("-s", "--sleep", default=False, action="store_true", help="put Myo into deep sleep (turn off)")
 
-    parser.add_argument("--rms", default=False, action="store_true", help="process data stream using RMS smoothing")
+    parser.add_argument("--rms", default=False, action="store_true", help="process stream using RMS smoothing")
     group2 = parser.add_mutually_exclusive_group()
-    group2.add_argument("--pca", nargs="+", metavar="REC", help="process data stream using PCA training set or model")
-    group2.add_argument("--ica", nargs="+", metavar="REC", help="process data stream using ICA training set or model")
+    group2.add_argument("--pca", nargs="+", metavar="REC", help="process stream using RAW training set or PCA model")
+    group2.add_argument("--ica", nargs="+", metavar="REC", help="process stream using RAW training set or ICA model")
     group3 = parser.add_mutually_exclusive_group()
-    group3.add_argument("--svm", nargs="+", metavar="REC", help="classify using SVM training set or model")  # TODO
+    group3.add_argument("--svm", nargs="+", metavar="REC", help="classify using PCA/ICA training set or SVM model")
 
     group4 = parser.add_mutually_exclusive_group()
     group4.add_argument("--tty", default=None, help="Myo dongle device (autodetected if omitted)")
@@ -493,7 +564,7 @@ def main():
     if args.svm and not args.pca and not args.ica:
         parser.error("the following arguments are required for 'svm': 'pca' or 'ica'")
 
-    # Model was given instead of train set
+    # Model was given instead of trainining set
     if args.pca is not None and len(args.pca) == 1 and not args.pca[0].endswith(".csv"):
         args.pca = args.pca[0]
     if args.ica is not None and len(args.ica) == 1 and not args.ica[0].endswith(".csv"):
@@ -508,7 +579,7 @@ def main():
     live_myo = args.recording is None
 
     # Setup common stream interface for Myo or Playback
-    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, do_svm=args.svm)
+    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, svm_train_set=args.svm)
 
     # Setup Myo or Playback
     if live_myo:
@@ -544,9 +615,10 @@ def main():
                 else:
                     playback.play_frame()
 
-                    # Delay by 0.005 seconds (1 second / 200 Hz) including execution time
-                    diff = min(time.time() - starttime, 0.005)
-                    time.sleep(0.005 - diff)
+                    # Delay by (1 second / FREQUENCY Hz) including execution time
+                    delay = 1 / FREQUENCY
+                    diff = min(time.time() - starttime, 1 / FREQUENCY)
+                    time.sleep(delay - diff)
                     starttime = time.time()
 
                 # Handle Pygame events

@@ -27,7 +27,7 @@ def main():
         parser.error("the following arguments are required: 'pca' or 'ica' or 'svm'")
 
     # Setup stream interface
-    stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica)
+    stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica, svm_train_set=args.svm)
     model, stype = stream.current_model()
 
     filename = f"training/{time.strftime('%Y%m%d-%H%M%S')}_model.{stype}"

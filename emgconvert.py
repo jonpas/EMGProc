@@ -15,24 +15,20 @@ def main():
 
     group1 = parser.add_mutually_exclusive_group()
     group1.add_argument("--pca", nargs="+", metavar="REC",
-                        help="convert RAW to PCA using given RAW training set or model")
+                        help="convert RAW to PCA using given RAW training set or PCA model")
     group1.add_argument("--ica", nargs="+", metavar="REC",
-                        help="convert RAW to ICA using given RAW training set or model")
-    group1.add_argument("--svm", nargs="+", metavar="REC",
-                        help="convert PCA/ICA to SVM using given PCA/ICA training set or model")
+                        help="convert RAW to ICA using given RAW training set or ICA model")
 
     args = parser.parse_args()
 
-    if not args.pca and not args.ica and not args.svm:
-        parser.error("the following arguments are required: 'pca' or 'ica' or 'svm'")
+    if not args.pca and not args.ica:
+        parser.error("the following arguments are required: 'pca' or 'ica'")
 
     # Model was given instead of train set
     if args.pca is not None and len(args.pca) == 1 and not args.pca[0].endswith(".csv"):
         args.pca = args.pca[0]
     if args.ica is not None and len(args.ica) == 1 and not args.ica[0].endswith(".csv"):
         args.ica = args.ica[0]
-    if args.svm is not None and len(args.svm) == 1 and not args.svm[0].endswith(".csv"):
-        args.svm = args.svm[0]
 
     # Setup stream interface (training set)
     stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica)

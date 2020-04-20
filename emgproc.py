@@ -355,7 +355,7 @@ class Stream():
 
             # Read file
             header = next(emg_reader)
-            if header == CSV_HEADER_CA[:self.ca_components - 1]:
+            if header == CSV_HEADER_CA[:self.ca_components + 1]:
                 try:
                     while True:
                         data = next(emg_reader)
@@ -457,7 +457,7 @@ class Myo():
         emg = list(emg)
         _, ca_data, _ = self.stream.plot(emg, recording=self.recording)
 
-        record_data = ca_data if ca_data else emg
+        record_data = ca_data if len(ca_data) > 0 else emg
 
         if self.recording:
             csv_data = [timestamp]
@@ -500,7 +500,7 @@ class Myo():
             if self.recording_type == "raw":
                 self.emg_writer.writerow(CSV_HEADER_EMG)
             else:
-                self.emg_writer.writerow(CSV_HEADER_CA[:self.stream.ca_components - 1])
+                self.emg_writer.writerow(CSV_HEADER_CA[:self.stream.ca_components + 1])
         elif self.emg_file is not None:
             self.emg_file.close()
             self.emg_file = None

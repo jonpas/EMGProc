@@ -24,13 +24,11 @@ FONT_SIZE = 25
 # Data
 FREQUENCY = 200  # Hz
 CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "emg7", "emg8"]
-CSV_HEADER_CA = ["timestamp", "ca1", "ca2", "ca3"]
+CSV_HEADER_CA = ["timestamp", "ca1", "ca2", "ca3", "ca4", "ca5", "ca6", "ca7", "ca8"]
 # Processing
 RMS_WINDOW_SIZE = 50
-PCA_COMPONENTS = 3
-ICA_COMPONENTS = 3
-SVM_WINDOW_SIZE = 10
-SVM_IDLE_WEIGHT_FACTOR = 100.0
+SVM_WINDOW_SIZE = 10  # higher is smoother but more delay
+SVM_IDLE_WEIGHT_FACTOR = 100.0  # higher makes "idle" move more important
 
 VERBOSE = False
 
@@ -169,12 +167,13 @@ class Plotter():
 
 # Interface for data streaming from either live Myo device or recorded playback
 class Stream():
-    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], svm_train_set=[]):
+    def __init__(self, do_rms=False, pca_train_set=[], ica_train_set=[], ca_components=3, svm_train_set=[]):
         self.plotter = None  # Late setup (display modes)
         self.reset()
 
         # Processing
         self.do_rms = do_rms
+        self.ca_components = ca_components
         self.pca = self.init_pca(pca_train_set) if pca_train_set else None
         self.ica = self.init_ica(ica_train_set) if ica_train_set else None
         self.svm = self.init_svm(svm_train_set) if svm_train_set else None
@@ -305,7 +304,7 @@ class Stream():
             emg_data = self.read_ca_train_set(train_set, "pca")
 
             # Initialize and train
-            pca = PCA(n_components=PCA_COMPONENTS)
+            pca = PCA(n_components=self.ca_components)
             pca.fit(emg_data)
         else:
             pca = self.read_model(train_set, "pca")
@@ -326,7 +325,7 @@ class Stream():
             emg_data = self.read_ca_train_set(train_set, "ica")
 
             # Initialize and train
-            ica = FastICA(n_components=ICA_COMPONENTS, random_state=0)
+            ica = FastICA(n_components=self.ca_components, random_state=0)
             ica.fit(emg_data)
         else:
             ica = self.read_model(train_set, "ica")
@@ -356,7 +355,7 @@ class Stream():
 
             # Read file
             header = next(emg_reader)
-            if header == CSV_HEADER_CA:
+            if header == CSV_HEADER_CA[:self.ca_components - 1]:
                 try:
                     while True:
                         data = next(emg_reader)
@@ -370,6 +369,9 @@ class Stream():
                 print("-> Error! Incorrect header! Expected 'PCA/ICA'.")
 
             emg_file.close()
+
+        if "idle" not in classes:
+            print("Warning! No 'idle' move trained!")
 
         emg_data, classes = np.array(emg_data), np.array(classes)
         return emg_data, classes
@@ -398,7 +400,7 @@ class Stream():
             d = defaultdict(int)
             for svm_class in svm_classes:
                 d[svm_class] += 1
-            svm_class = max(d.items(), key=lambda x: x[1])
+            svm_class = max(d.items(), key=lambda x: x[1])[0]
 
             if VERBOSE:
                 print(f"svm: {svm_class}")
@@ -495,7 +497,10 @@ class Myo():
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.emg_file = open(filename, "w", newline="")
             self.emg_writer = csv.writer(self.emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
-            self.emg_writer.writerow(CSV_HEADER_EMG if self.recording_type == "raw" else CSV_HEADER_CA)
+            if self.recording_type == "raw":
+                self.emg_writer.writerow(CSV_HEADER_EMG)
+            else:
+                self.emg_writer.writerow(CSV_HEADER_CA[:self.stream.ca_components - 1])
         elif self.emg_file is not None:
             self.emg_file.close()
             self.emg_file = None
@@ -526,7 +531,7 @@ class Playback():
             if header == CSV_HEADER_EMG:
                 self.valid = True
                 self.type = "raw"
-            if header == CSV_HEADER_CA:
+            if header[:2] == CSV_HEADER_CA[:2]:
                 self.valid = True
                 self.type = "ca"
         except StopIteration:
@@ -565,9 +570,12 @@ def main():
     group1.add_argument("-s", "--sleep", default=False, action="store_true", help="put Myo into deep sleep (turn off)")
 
     parser.add_argument("--rms", default=False, action="store_true", help="process stream using RMS smoothing")
+
     group2 = parser.add_mutually_exclusive_group()
     group2.add_argument("--pca", nargs="+", metavar="REC", help="process stream using RAW training set or PCA model")
     group2.add_argument("--ica", nargs="+", metavar="REC", help="process stream using RAW training set or ICA model")
+    parser.add_argument("--components", default=3, type=int, help="PCA/ICA components to use")
+
     group3 = parser.add_mutually_exclusive_group()
     group3.add_argument("--svm", nargs="+", metavar="REC", help="classify using PCA/ICA training set or SVM model")
 
@@ -597,7 +605,8 @@ def main():
     live_myo = args.recording is None
 
     # Setup common stream interface for Myo or Playback
-    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, svm_train_set=args.svm)
+    stream = Stream(do_rms=args.rms, pca_train_set=args.pca, ica_train_set=args.ica, svm_train_set=args.svm,
+                    ca_components=args.components)
 
     # Setup Myo or Playback
     if live_myo:

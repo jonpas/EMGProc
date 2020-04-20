@@ -19,6 +19,8 @@ def main():
     group1.add_argument("--ica", nargs="+", metavar="REC",
                         help="convert RAW to ICA using given RAW training set or ICA model")
 
+    parser.add_argument("--components", default=3, type=int, help="PCA/ICA components to use")
+
     args = parser.parse_args()
 
     if not args.pca and not args.ica:
@@ -31,7 +33,7 @@ def main():
         args.ica = args.ica[0]
 
     # Setup stream interface (training set)
-    stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica)
+    stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica, ca_components=args.components)
     model, stype = stream.current_model()
 
     for recording in args.recordings:
@@ -48,7 +50,7 @@ def main():
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, "w", newline="") as emg_file:
             emg_writer = csv.writer(emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
-            emg_writer.writerow(emgproc.CSV_HEADER_CA)
+            emg_writer.writerow(emgproc.CSV_HEADER_CA[:args.components + 1])
 
             # Virtual playback for conversion
             while not stream.ended:

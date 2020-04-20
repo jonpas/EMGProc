@@ -21,13 +21,16 @@ def main():
     group1.add_argument("--svm", nargs="+", metavar="REC",
                         help="fit SVM model using given PCA/ICA training set")
 
+    parser.add_argument("--components", default=3, type=int, help="PCA/ICA components to use")
+
     args = parser.parse_args()
 
     if not args.pca and not args.ica and not args.svm:
         parser.error("the following arguments are required: 'pca' or 'ica' or 'svm'")
 
     # Setup stream interface
-    stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica, svm_train_set=args.svm)
+    stream = emgproc.Stream(pca_train_set=args.pca, ica_train_set=args.ica, svm_train_set=args.svm,
+                            ca_components=args.components)
     model, stype = stream.current_model()
 
     filename = f"training/{time.strftime('%Y%m%d-%H%M%S')}_model.{stype}"

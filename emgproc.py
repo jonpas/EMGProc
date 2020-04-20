@@ -576,7 +576,7 @@ def main():
     group2 = parser.add_mutually_exclusive_group()
     group2.add_argument("--pca", nargs="+", metavar="REC", help="process stream using RAW training set or PCA model")
     group2.add_argument("--ica", nargs="+", metavar="REC", help="process stream using RAW training set or ICA model")
-    parser.add_argument("--components", default=3, type=int, help="PCA/ICA components to use")
+    parser.add_argument("-c", "--components", default=3, type=int, help="PCA/ICA components to use")
 
     group3 = parser.add_mutually_exclusive_group()
     group3.add_argument("--svm", nargs="+", metavar="REC", help="classify using PCA/ICA training set or SVM model")

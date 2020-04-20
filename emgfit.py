@@ -21,7 +21,7 @@ def main():
     group1.add_argument("--svm", nargs="+", metavar="REC",
                         help="fit SVM model using given PCA/ICA training set")
 
-    parser.add_argument("--components", default=3, type=int, help="PCA/ICA components to use")
+    parser.add_argument("-c", "--components", default=3, type=int, help="PCA/ICA components to use")
 
     args = parser.parse_args()
 

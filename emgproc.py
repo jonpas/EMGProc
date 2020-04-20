@@ -8,10 +8,11 @@ import serial
 import csv
 import math
 import pickle
+from collections import defaultdict
 
 import numpy as np
 from sklearn.decomposition import PCA, FastICA
-from sklearn.svm import LinearSVC
+from sklearn.svm import SVC
 
 
 # Graph
@@ -28,7 +29,8 @@ CSV_HEADER_CA = ["timestamp", "ca1", "ca2", "ca3"]
 RMS_WINDOW_SIZE = 50
 PCA_COMPONENTS = 3
 ICA_COMPONENTS = 3
-SVM_WINDOW_SIZE = FREQUENCY  # one classification per second
+SVM_WINDOW_SIZE = 10
+SVM_IDLE_WEIGHT_FACTOR = 100.0
 
 VERBOSE = False
 
@@ -290,6 +292,7 @@ class Stream():
             self.rms_window.clear()
             emg_file.close()
 
+        emg_data = np.array(emg_data)
         return emg_data
 
     def read_model(self, model, stype="?"):
@@ -310,7 +313,7 @@ class Stream():
         return pca
 
     def calc_pca(self, rms_data):
-        emg_data = np.array(rms_data).reshape(1, -1)  # Reshape to 1 sample, 8 features
+        emg_data = np.array(rms_data).reshape(1, -1)  # Reshape to 1 sample, N features
         pca_data = self.pca.transform(emg_data)[0]  # Take 1 sample from array of samples (contains only one)
 
         if VERBOSE:
@@ -331,7 +334,7 @@ class Stream():
         return ica
 
     def calc_ica(self, rms_data):
-        emg_data = np.array(rms_data).reshape(1, -1)  # Reshape to 1 sample, 8 features
+        emg_data = np.array(rms_data).reshape(1, -1)  # Reshape to 1 sample, N features
         ica_data = self.ica.transform(emg_data)[0]  # Take 1 sample from array of samples (contains only one)
         ica_data *= 5000  # Scale up
 
@@ -348,7 +351,6 @@ class Stream():
             classification = os.path.basename(file).split("_")[0]
             print(f"Training {stype.upper()} '{classification}' with '{file}'...")
 
-            emg_subdata = []
             emg_file = open(file, "r", newline="")
             emg_reader = csv.reader(emg_file, csv.unix_dialect, quoting=csv.QUOTE_MINIMAL)
 
@@ -360,7 +362,8 @@ class Stream():
                         data = next(emg_reader)
                         _, emg = data[0], list(map(float, data[1:]))
 
-                        emg_subdata.extend(emg)
+                        emg_data.append(emg)
+                        classes.append(classification)
                 except StopIteration:
                     pass
             else:
@@ -368,20 +371,14 @@ class Stream():
 
             emg_file.close()
 
-            emg_data.append(emg_subdata)
-            classes.append(classification)
-
-        # Cut ends so all features have same amount of samples
-        minlen = SVM_WINDOW_SIZE
-        emg_data = [x[:minlen] for x in emg_data]
-
+        emg_data, classes = np.array(emg_data), np.array(classes)
         return emg_data, classes
 
     def init_svm(self, train_set):
         if isinstance(train_set, list):
             emg_data, classes = self.read_class_train_set(train_set, "svm")
 
-            svm = LinearSVC(random_state=0, max_iter=100000, tol=0.00000000001)
+            svm = SVC(random_state=0, kernel="rbf", class_weight={"idle": SVM_IDLE_WEIGHT_FACTOR})
             svm.fit(emg_data, classes)
         else:
             svm = self.read_model(train_set, "svm")
@@ -389,14 +386,19 @@ class Stream():
         return svm
 
     def class_svm(self, ca_data):
-        # Gather samples, up to SVM_WINDOW_SIZE
+        # Gather samples, up to SVM_WINDOW_SIZE to smooth classification
         self.svm_window.append(ca_data)
         if len(self.svm_window) > SVM_WINDOW_SIZE:
             self.svm_window.pop(0)
 
             window = np.array(self.svm_window)
-            window = np.reshape(window, (window.shape[1], window.shape[0]))
-            svm_class = self.svm.predict(window)[0]  # Take 1 sample from array of samples (contains only one)
+            svm_classes = self.svm.predict(window)  # predict each sample in window
+
+            # Take classification with most occurences in the window
+            d = defaultdict(int)
+            for svm_class in svm_classes:
+                d[svm_class] += 1
+            svm_class = max(d.items(), key=lambda x: x[1])
 
             if VERBOSE:
                 print(f"svm: {svm_class}")
@@ -464,7 +466,7 @@ class Myo():
                 print("Error! Unable to write to CSV!")
 
         if VERBOSE:
-            print(f"[myo] {self.recording_type()}: {timestamp}, {record_data}")
+            print(f"[myo] {self.recording_type}: {timestamp}, {record_data}")
 
     def handle_battery(self, timestamp, battery_level):
         if battery_level < 5:

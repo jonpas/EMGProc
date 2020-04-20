@@ -457,11 +457,11 @@ class Myo():
         emg = list(emg)
         _, ca_data, _ = self.stream.plot(emg, recording=self.recording)
 
-        record_data = ca_data if ca_data is not [] else emg
+        record_data = ca_data if ca_data else emg
 
         if self.recording:
             csv_data = [timestamp]
-            csv_data.extend(ca_data)
+            csv_data.extend(record_data)
             try:
                 self.emg_writer.writerow(csv_data)
             except AttributeError:
@@ -488,11 +488,11 @@ class Myo():
 
     def record(self, state=False, toggle=False):
         if toggle:
-            self.recording = not self.recording
+            recording = not self.recording
         else:
-            self.recording = state
+            recording = state
 
-        if self.recording:
+        if recording:
             filename = f"recordings/{self.recording_type}/{time.strftime('%Y%m%d-%H%M%S')}.csv"
             os.makedirs(os.path.dirname(filename), exist_ok=True)
             self.emg_file = open(filename, "w", newline="")
@@ -505,6 +505,8 @@ class Myo():
             self.emg_file.close()
             self.emg_file = None
             self.emg_writer = None
+
+        self.recording = recording
 
 
 # Recorded Myo data playback interface

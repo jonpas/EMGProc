@@ -40,6 +40,15 @@ Convert recording to processed recording:
   - `$ emgconvert.py example_raw.csv --pca *_raw.csv` creates `example_pca.csv`
 
 
+### Game
+
+Small proof of concept game based on [wultes/snapy](https://github.com/wultes/snapy) is included as a submodule. It features Myo gesture recognition (`extension` and `flexion`) to control snake movement.
+
+Run it with `$ python emggame.py` _(using 2 PCA components `2comp` training models)_.
+
+Best gesture recongition is achieved by performing `extension` and `flexion` quickly and slowly returning to the idle position to prevent triggering the opposite gesture on the way back.
+
+
 ## Setup
 
 **Dependencies:**

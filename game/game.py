@@ -14,7 +14,7 @@ class MainGame:
         self.height = 500
         self.rows = 20
         self.window = pygame.display.set_mode((self.width, self.height))
-        self.caption = "SnaPy"
+        self.caption = "SnaPy Myo"
         self.color = (255, 0, 0)
         self.menu_font = pygame.font.Font("game/fonts/menu_font.ttf", 24)
         self.name_font = pygame.font.Font("game/fonts/name_font.ttf", 30)

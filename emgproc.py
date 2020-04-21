@@ -613,9 +613,10 @@ def main():
     # Setup Myo or Playback
     if live_myo:
         try:
+            print("Connecting to Myo...")
             myo = Myo(stream, args.tty, args.native, args.mac)
-        except ValueError as e:
-            print(f"Error! {e}")
+        except (ValueError, KeyboardInterrupt) as e:
+            print(f"Error! Unable to connect!\n{e}")
             return 1
     else:
         playback = Playback(stream, args.recording)
@@ -655,11 +656,11 @@ def main():
                     if ev.type == pygame.QUIT:
                         raise KeyboardInterrupt()
                     elif ev.type == pygame.KEYDOWN:
-                        if ev.unicode == 'q':
+                        if ev.key == pygame.K_q:
                             raise KeyboardInterrupt()
-                        elif ev.unicode == 'p':
+                        elif ev.key == pygame.K_p:
                             stream.pause(toggle=True)
-                        elif ev.unicode == 'r':
+                        elif ev.key == pygame.K_r:
                             if live_myo:
                                 myo.record(toggle=True)
         except KeyboardInterrupt:
@@ -673,8 +674,9 @@ def main():
     return 0
 
 
-if __name__ == "__main__" or os.environ.get("EMGPROC_USE_LIBS", False):
+if __name__ == "__main__" or os.environ.get("EMGPROC_LOAD_GAME", False):
     import pygame
+if __name__ == "__main__" or os.environ.get("EMGPROC_LOAD_MYO", False):
     from myo_raw import MyoRaw, DataCategory, EMGMode
 
 if __name__ == "__main__":

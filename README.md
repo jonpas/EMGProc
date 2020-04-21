@@ -42,14 +42,21 @@ Convert recording to processed recording:
 
 ### Game
 
-Small proof of concept game based on [wultes/snapy](https://github.com/wultes/snapy) is included as a submodule. It features Myo gesture recognition (`extension` and `flexion`) to control snake movement.
+Small proof of concept game based on [wultes/snapy](https://github.com/wultes/snapy). It features Myo gesture recognition (`extension` and `flexion`) to control snake movement.
 
-Run it with `$ python emggame.py` _(using 2 PCA components `2comp` training models)_.
+Navigate to `game` folder and run with `$ python run.py` _(using 2 PCA components `2comp` training models)_.
 
 Best gesture recongition is achieved by performing `extension` and `flexion` quickly and slowly returning to the idle position to prevent triggering the opposite gesture on the way back.
 
 
 ## Setup
+
+_Targetted at Python 3.8._
+
+- `$ python -m venv venv` (virtual environment)
+- `$ source venv/bin/activate`
+- `$ pip install -r requirements.txt` (`$ pip freeze > requirements.txt` to update dependencies)
+  - _Installs all required packages._
 
 **Dependencies:**
 - [scikit-learn](https://scikit-learn.org/)

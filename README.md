@@ -62,6 +62,7 @@ _Targetted at Python 3.8._
 
 **Dependencies:**
 - [scikit-learn](https://scikit-learn.org/)
-- [NumPy](https://numpy.org/) _(only `emgproc.py`)_
-- [myo-raw](https://github.com/jonpas/myo-raw) _(only `emgproc.py`)_
-- [Pygame](https://www.pygame.org/) _(only `emgproc.py`)_
+- [NumPy](https://numpy.org/)
+- [myo-raw](https://github.com/jonpas/myo-raw) _(only `emgproc.py` and `emggame.py`)_
+- [pySerial](https://pythonhosted.org/pyserial/) _(only `emgproc.py` and `emggame.py`)_
+- [PyGame](https://www.pygame.org/) _(only `emgproc.py` and `emggame.py`)_

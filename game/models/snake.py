@@ -48,7 +48,7 @@ class Snake:
         self.dirnx = 1
         self.dirny = 0
 
-    def addCube(self):
+    def add_cube(self):
         tail = self.body[-1]
         dx, dy = tail.dirnx, tail.dirny
 

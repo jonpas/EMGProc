@@ -177,16 +177,16 @@ class Stream():
         self.pca = self.init_pca(pca_train_set) if pca_train_set else None
         self.ica = self.init_ica(ica_train_set) if ica_train_set else None
         self.svm = self.init_svm(svm_train_set) if svm_train_set else None
+        self.gesture = ""
 
     def create_plot(self, live=False):
         self.plotter = Plotter(live=live)
 
     def plot(self, data, ca=False, recording=False):
-        if self.plotter is not None:
-            self.calc_frequency()
+        self.calc_frequency()
 
         # Processing
-        rms_data, ca_data, gesture = [], [], ""
+        rms_data, ca_data = [], []
 
         if ca:
             ca_data, data = data, []
@@ -201,18 +201,18 @@ class Stream():
                 ca_data = self.calc_ica(rms_data)
 
         if self.svm is not None:
-            gesture = self.class_svm(ca_data)
+            self.gesture = self.class_svm(ca_data)
 
         if not self.paused and self.plotter is not None:
             self.plotter.plot([x / 500. for x in data],
                               rms_values=[x / 500. for x in rms_data],
                               ca_values=[x / 500. for x in ca_data],
                               ca=self.current_model()[1],
-                              gesture=gesture,
+                              gesture=self.gesture,
                               frequency=self.frequency,
                               recording=recording)
 
-        return rms_data, ca_data, gesture
+        return rms_data, ca_data, self.gesture
 
     def calc_frequency(self):
         self.times.append(time.time())
@@ -433,13 +433,13 @@ class Myo():
         self.emg_writer = None
 
         # Setup
-        self.setup_myo()
+        self.setup()
 
     def close(self):
         self.myo.disconnect()
         self.record(False)
 
-    def setup_myo(self):
+    def setup(self):
         # Add handles to process EMG and battery level data
         self.myo.add_handler(DataCategory.EMG, self.handle_emg)
         self.myo.add_handler(DataCategory.BATTERY, self.handle_battery)
@@ -452,6 +452,15 @@ class Myo():
 
         # Vibrate to signalise a successful setup
         # myo.vibrate(1)
+
+    def run(self):
+        self.myo.run(1)
+
+    def disconnect(self):
+        self.myo.disconnect()
+
+    def sleep(self):
+        self.myo.deep_sleep()
 
     def handle_emg(self, timestamp, emg, moving, characteristic_num):
         emg = list(emg)
@@ -615,6 +624,7 @@ def main():
         try:
             print("Connecting to Myo...")
             myo = Myo(stream, args.tty, args.native, args.mac)
+            print("Connected to Myo!")
         except (ValueError, KeyboardInterrupt) as e:
             print(f"Error! Unable to connect!\n{e}")
             return 1
@@ -626,7 +636,8 @@ def main():
 
     # Run main logic
     if args.sleep:
-        myo.myo.deep_sleep()
+        if live_myo:
+            myo.sleep()
     else:
         pygame.init()
         stream.create_plot(live=live_myo)
@@ -637,10 +648,10 @@ def main():
             while True:
                 if live_myo:
                     try:
-                        myo.myo.run(1)
+                        myo.run()
                     except serial.serialutil.SerialException:
                         print("Error! Myo exception! Attempting reboot...")
-                        myo.myo.disconnect()
+                        myo.disconnect()
                         myo = Myo(stream, args.tty, args.native, args.mac)
                 else:
                     playback.play_frame()
@@ -674,6 +685,7 @@ def main():
     return 0
 
 
+# Conditional imports
 if __name__ == "__main__" or os.environ.get("EMGPROC_LOAD_GAME", False):
     import pygame
 if __name__ == "__main__" or os.environ.get("EMGPROC_LOAD_MYO", False):

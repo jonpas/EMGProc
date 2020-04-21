@@ -48,6 +48,8 @@ Navigate to `game` folder and run with `$ python run.py` _(using 2 PCA component
 
 Best gesture recongition is achieved by performing `extension` and `flexion` quickly and slowly returning to the idle position to prevent triggering the opposite gesture on the way back.
 
+![emggame](https://user-images.githubusercontent.com/7935003/79920612-c6649a80-8430-11ea-99a3-4a12f08eefa8.gif)
+
 
 ## Setup
 

@@ -28,6 +28,8 @@ _Following are most useful usage patterns and do not describe all patterns of th
 
 PCA, ICA and SVM fitting and processing is available in real-time (with visualizer) as well as separate command line mode for conversions and fitting. Example training data is located in `training/` folder.
 
+_All training was performed with the Myo armband positioned on the most dominant arm, just below the elbow, with the Myo logo on the inner side of the arm._
+
 Process data in real-time:
   - `$ emgproc.py --pca *_raw.csv` fit at start using given training data.
   - `$ emgproc.py --ica model.ica` given training model.
@@ -44,7 +46,8 @@ Convert recording to processed recording:
 
 Small proof of concept game based on [wultes/snapy](https://github.com/wultes/snapy). It features Myo gesture recognition (`extension` and `flexion`) to control snake movement.
 
-Run with `$ python emggame.py` _(using 2 PCA components `2comp` training models)_.
+- Place Myo armband on your most dominant arm, just below the elbow, with the Myo logo on the inner side of the arm.
+- Run with `$ python emggame.py` _(using 2 PCA components `2comp` training models)_.
 
 Best gesture recongition is achieved by performing `extension` and `flexion` quickly and slowly returning to the idle position to prevent triggering the opposite gesture on the way back.
 

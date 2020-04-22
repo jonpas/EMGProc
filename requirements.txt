@@ -1,5 +1,5 @@
 joblib==0.14.1
-myo-raw==2.2.1
+git+https://github.com/jonpas/myo-raw
 numpy==1.18.3
 pygame==1.9.6
 pyserial==3.4

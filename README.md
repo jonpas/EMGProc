@@ -61,11 +61,11 @@ _Targetted at Python 3.8._
 - `$ python -m venv venv` (virtual environment)
 - `$ source venv/bin/activate`
 - `$ pip install -r requirements.txt` (`$ pip freeze > requirements.txt` to update dependencies)
-  - _Installs all required packages._
+  - _Installs all required packages except `myo-raw`._
 
 **Dependencies:**
+- [jonpas/myo-raw](https://github.com/jonpas/myo-raw) _(only `emgproc.py` and `emggame.py`)_
 - [scikit-learn](https://scikit-learn.org/)
 - [NumPy](https://numpy.org/)
-- [myo-raw](https://github.com/jonpas/myo-raw) _(only `emgproc.py` and `emggame.py`)_
 - [pySerial](https://pythonhosted.org/pyserial/) _(only `emgproc.py` and `emggame.py`)_
 - [PyGame](https://www.pygame.org/) _(only `emgproc.py` and `emggame.py`)_

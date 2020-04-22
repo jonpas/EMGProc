@@ -27,7 +27,7 @@ CSV_HEADER_EMG = ["timestamp", "emg1", "emg2", "emg3", "emg4", "emg5", "emg6", "
 CSV_HEADER_CA = ["timestamp", "ca1", "ca2", "ca3", "ca4", "ca5", "ca6", "ca7", "ca8"]
 # Processing
 RMS_WINDOW_SIZE = 50
-SVM_WINDOW_SIZE = 10  # higher is smoother but more delay
+SVM_WINDOW_SIZE = 5  # higher is smoother but more delay
 SVM_IDLE_WEIGHT_FACTOR = 100.0  # higher makes "idle" move more important
 
 VERBOSE = False

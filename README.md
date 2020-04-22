@@ -49,7 +49,7 @@ Small proof of concept game based on [wultes/snapy](https://github.com/wultes/sn
 - Place Myo armband on your most dominant arm, just below the elbow, with the Myo logo on the inner side of the arm.
 - Run with `$ python emggame.py` _(using 2 PCA components `2comp` training models)_.
 
-Best gesture recongition is achieved by performing `extension` and `flexion` quickly and slowly returning to the idle position to prevent triggering the opposite gesture on the way back.
+Best gesture recognition is achieved by performing `extension` and `flexion` quickly and slowly returning to the idle position to prevent triggering the opposite gesture on the way back.
 
 ![emggame](https://user-images.githubusercontent.com/7935003/79920612-c6649a80-8430-11ea-99a3-4a12f08eefa8.gif)
 

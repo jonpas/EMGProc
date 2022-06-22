@@ -1,6 +1,6 @@
 joblib==0.14.1
 git+https://github.com/jonpas/myo-raw
-numpy==1.18.3
+numpy==1.22.0
 pygame==1.9.6
 pyserial==3.4
 scikit-learn==0.22.2.post1
